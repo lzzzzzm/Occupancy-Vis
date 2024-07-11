@@ -16,6 +16,7 @@ import colorsys
 class OccupancyVisualizer(Visualizer):
     def __init__(self,
                  name: str = 'visualizer',
+                 background_color=(0, 0, 0),
                  image: Optional[np.ndarray] = None,
                  vis_backends: Optional[Dict] = None,
                  save_dir: Optional[str] = None,
@@ -27,6 +28,7 @@ class OccupancyVisualizer(Visualizer):
             save_dir=save_dir)
         color_map = np.array(color_map)
         color_map = color_map[:, :3]
+        self.background_color = background_color
         self.color_map = color_map
 
         self.flag_pause = False
@@ -218,7 +220,7 @@ class OccupancyVisualizer(Visualizer):
         render_option = self.o3d_vis.get_render_option()
         if render_option is not None:
             render_option.point_size = points_size
-            render_option.background_color = np.asarray([255, 255, 255])
+            render_option.background_color = np.asarray(self.background_color)
 
         points = points.copy()
         pcd = geometry.PointCloud()
@@ -261,7 +263,6 @@ class OccupancyVisualizer(Visualizer):
     def vis_occ(self,
                 occ_seg,
                 occ_flow=None,
-                vis_flow=False,
                 save_path=None,
                 view_json=None,
                 ignore_labels: Optional[List[tuple]] = [0, 17],
@@ -276,7 +277,7 @@ class OccupancyVisualizer(Visualizer):
         points, occ_voxel, occ_flow = self._voxel2points(occ_seg, occ_flow, ignore_labels=ignore_labels, voxelSize=voxelSize, range=range)
         points = points.numpy()
         occ_voxel = occ_voxel.numpy()
-        if not vis_flow:
+        if occ_flow is None:
             pts_color = self.color_map[occ_voxel.astype(int) % len(self.color_map)]
         else:
             vx = occ_flow[..., 0]

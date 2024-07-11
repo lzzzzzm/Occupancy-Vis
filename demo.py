@@ -188,6 +188,8 @@ def vis_occ_on_3d(vis_scenes_infos, vis_scene, vis_path, pred_path, free_cls=16,
                 occ_semantics = occ_label['semantics']
                 if vis_flow:
                     occ_flow = occ_label['flow']    # only support for openoccv2
+                else:
+                    occ_flow = None
             else:
                 token = info['token']
                 occ_label_path = os.path.join(pred_path, token + '.npz')
@@ -195,8 +197,10 @@ def vis_occ_on_3d(vis_scenes_infos, vis_scene, vis_path, pred_path, free_cls=16,
                 occ_semantics = occ_label['semantics']
                 if vis_flow:
                     occ_flow = occ_label['flow']
+                else:
+                    occ_flow = None
             # if view json exits
-            occ_visualizer = OccupancyVisualizer(color_map=color_map)
+            occ_visualizer = OccupancyVisualizer(color_map=color_map, background_color=(0, 0, 0))
             if os.path.exists('view.json'):
                 param = o3d.io.read_pinhole_camera_parameters('view.json')
             else:
@@ -208,9 +212,8 @@ def vis_occ_on_3d(vis_scenes_infos, vis_scene, vis_path, pred_path, free_cls=16,
                 voxelSize=(0.4, 0.4, 0.4),
                 range=[-40.0, -40.0, -1.0, 40.0, 40.0, 5.4],
                 save_path=save_path,
-                wait_time=1,  # 1s, -1 means wait until press q
+                wait_time=-1,  # 1s, -1 means wait until press q
                 view_json=param,
-                vis_flow=vis_flow
             )
             # press top-right x to close the windows
             param = occ_visualizer.o3d_vis.get_view_control().convert_to_pinhole_camera_parameters()
@@ -296,7 +299,7 @@ if __name__ == '__main__':
     # vis_occ_on_bev(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True)
 
     # visualizer occupancy on 3d, gt
-    # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path)
+    vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True, vis_flow=False)
 
     # visualize occupancy on bev plane, pred
     # vis_occ_on_bev(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False)

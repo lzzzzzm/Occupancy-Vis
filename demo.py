@@ -40,6 +40,7 @@ def parse_args():
     parse.add_argument('--pred-path', type=str, default='predictions', help='path of the prediction data')
     parse.add_argument('--vis-scene', type=list, default=['scene-0003', 'scene-0012', 'scene-0013', 'scene-0014'], help='visualize scene list')
     parse.add_argument('--vis-path', type=str, default='demo_out', help='path of saving the visualization images')
+    parse.add_argument('--single-data-path', type=str, default=None, help='single data path for visualization')
     args = parse.parse_args()
     return args
 
@@ -167,7 +168,15 @@ def vis_occ_on_bev(vis_scenes_infos, vis_scene, vis_path, pred_path, vis_gt=True
         video.release()
 
 
-def vis_occ_on_3d(vis_scenes_infos, vis_scene, vis_path, pred_path, free_cls=16, vis_gt=True, vis_flow=False):
+def vis_occ_on_3d(vis_scenes_infos,
+                  vis_scene,
+                  vis_path,
+                  pred_path,
+                  single_data_path=None,
+                  free_cls=16,
+                  vis_gt=True,
+                  vis_flow=False,
+                  background_color=(255, 255, 255)):
     # check vis path
     mmcv.mkdir_or_exist(vis_path)
 
@@ -179,28 +188,37 @@ def vis_occ_on_3d(vis_scenes_infos, vis_scene, vis_path, pred_path, free_cls=16,
         mmcv.mkdir_or_exist(buffer_vis_path)
         for index, info in enumerate(scene_infos):
             save_path = os.path.join(buffer_vis_path, str(index))
-
-            if vis_gt:
-                occ_path = info['occ_path']
-                occ_path = occ_path.replace('gts', 'openocc_v2')
-                occ_label_path = os.path.join(occ_path, 'labels.npz')
-                occ_label = np.load(occ_label_path)
-                occ_semantics = occ_label['semantics']
-                if vis_flow:
-                    occ_flow = occ_label['flow']    # only support for openoccv2
+            # visualize the scene data
+            if single_data_path is None:
+                if vis_gt:
+                    occ_path = info['occ_path']
+                    occ_path = occ_path.replace('gts', 'openocc_v2')
+                    occ_label_path = os.path.join(occ_path, 'labels.npz')
+                    occ_label = np.load(occ_label_path)
+                    occ_semantics = occ_label['semantics']
+                    if vis_flow:
+                        occ_flow = occ_label['flow']    # only support for openoccv2
+                    else:
+                        occ_flow = None
                 else:
-                    occ_flow = None
+                    token = info['token']
+                    occ_label_path = os.path.join(pred_path, token + '.npz')
+                    occ_label = np.load(occ_label_path)
+                    occ_semantics = occ_label['semantics']
+                    if vis_flow:
+                        occ_flow = occ_label['flow']
+                    else:
+                        occ_flow = None
+            # visualize single data
             else:
-                token = info['token']
-                occ_label_path = os.path.join(pred_path, token + '.npz')
-                occ_label = np.load(occ_label_path)
+                occ_label = np.load(single_data_path)
                 occ_semantics = occ_label['semantics']
                 if vis_flow:
                     occ_flow = occ_label['flow']
                 else:
                     occ_flow = None
             # if view json exits
-            occ_visualizer = OccupancyVisualizer(color_map=color_map, background_color=(0, 0, 0))
+            occ_visualizer = OccupancyVisualizer(color_map=color_map, background_color=background_color)
             if os.path.exists('view.json'):
                 param = o3d.io.read_pinhole_camera_parameters('view.json')
             else:
@@ -220,30 +238,36 @@ def vis_occ_on_3d(vis_scenes_infos, vis_scene, vis_path, pred_path, free_cls=16,
             o3d.io.write_pinhole_camera_parameters('view.json', param)
 
             occ_visualizer.o3d_vis.destroy_window()
+            if single_data_path:
+                break
 
-        # write video
-        for i in range(index):
-            img_path = os.path.join(buffer_vis_path, str(i) + '.png')
-            img = cv.imread(img_path)
-            vis_bev_semantics.append(img)
-            os.remove(img_path)
-        # save video
-        fourcc = cv.VideoWriter_fourcc(*'XVID')
-        if vis_gt:
-            if vis_flow:
-                video_path = vis_path + '/' + 'gt-flow_' + scene_name + '.avi'
+        if single_data_path:
+            break
+
+        if single_data_path is None:
+            # write video
+            for i in range(index):
+                img_path = os.path.join(buffer_vis_path, str(i) + '.png')
+                img = cv.imread(img_path)
+                vis_bev_semantics.append(img)
+                os.remove(img_path)
+            # save video
+            fourcc = cv.VideoWriter_fourcc(*'XVID')
+            if vis_gt:
+                if vis_flow:
+                    video_path = vis_path + '/' + 'gt-flow_' + scene_name + '.avi'
+                else:
+                    video_path = vis_path + '/' + 'gt-occ_' + scene_name + '.avi'
             else:
-                video_path = vis_path + '/' + 'gt-occ_' + scene_name + '.avi'
-        else:
-            if vis_flow:
-                video_path = vis_path + '/' + 'pred-flow_' + scene_name + '.avi'
-            else:
-                video_path = vis_path + '/' + 'pred-occ_' + scene_name + '.avi'
-        video = cv.VideoWriter(video_path, fourcc, 5, (img.shape[1], img.shape[0]))
-        for img in vis_bev_semantics:
-            video.write(img)
-        video.release()
-        print('Save video to {}'.format(video_path))
+                if vis_flow:
+                    video_path = vis_path + '/' + 'pred-flow_' + scene_name + '.avi'
+                else:
+                    video_path = vis_path + '/' + 'pred-occ_' + scene_name + '.avi'
+            video = cv.VideoWriter(video_path, fourcc, 5, (img.shape[1], img.shape[0]))
+            for img in vis_bev_semantics:
+                video.write(img)
+            video.release()
+            print('Save video to {}'.format(video_path))
 
 
 def flow_to_color(vx, vy, max_magnitude=None):
@@ -299,7 +323,7 @@ if __name__ == '__main__':
     # vis_occ_on_bev(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True)
 
     # visualizer occupancy on 3d, gt
-    vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True, vis_flow=False)
+    # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True, vis_flow=False)
 
     # visualize occupancy on bev plane, pred
     # vis_occ_on_bev(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False)
@@ -309,3 +333,6 @@ if __name__ == '__main__':
 
     # visualizer scene flow on 3d, pred
     # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False, vis_flow=True)
+
+    # visualizer single occupancy on 3d, pred
+    vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False, single_data_path=args.single_data_path)

@@ -9,7 +9,7 @@ pip install mmcv-full==1.7.0 -f https://download.openmmlab.com/mmcv/dist/cu117/t
 ```
 Install the required packages.
 ```
-pip install -r requirements.txt
+pip install -r .\requirement.txt
 ```
 
 ## Data Preparation

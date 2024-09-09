@@ -13,23 +13,23 @@ import open3d as o3d
 import colorsys
 color_map = np.array(
     [
-        [255, 120, 50],  # barrier              orange
-        [255, 192, 203],  # bicycle              pink
-        [255, 255, 0],  # bus                  yellow
-        [0, 150, 245],  # car                  blue
-        [0, 255, 255],  # construction_vehicle cyan
-        [255, 127, 0],  # motorcycle           dark orange
-        [255, 0, 0],  # pedestrian           red
-        [255, 240, 150],  # traffic_cone         light yellow
-        [135, 60, 0],  # trailer              brown
-        [160, 32, 240],  # truck                purple
-        [255, 0, 255],  # driveable_surface    dark pink
-        [139, 137, 137],  # other_flat           dark red
-        [75, 0, 75],  # sidewalk             dard purple
-        [150, 240, 80],  # terrain              light green
-        [230, 230, 250],  # manmade              white
-        [0, 175, 0],  # vegetation           green
-        [255, 255, 255]  # free                 white
+        [255, 120, 50],     # barrier              orange
+        [255, 192, 203],    # bicycle              pink
+        [255, 255, 0],      # bus                  yellow
+        [0, 150, 245],      # car                  blue
+        [0, 255, 255],      # construction_vehicle cyan
+        [255, 127, 0],      # motorcycle           dark orange
+        [255, 0, 0],        # pedestrian           red
+        [255, 240, 150],    # traffic_cone         light yellow
+        [135, 60, 0],       # trailer              brown
+        [160, 32, 240],     # truck                purple
+        [255, 0, 255],      # driveable_surface    dark pink
+        [139, 137, 137],    # other_flat           dark red
+        [75, 0, 75],        # sidewalk             dard purple
+        [150, 240, 80],     # terrain              light green
+        [230, 230, 250],    # manmade              white
+        [0, 175, 0],        # vegetation           green
+        [255, 255, 255]     # free                 white
     ]
 )
 
@@ -38,9 +38,11 @@ def parse_args():
     parse = argparse.ArgumentParser('')
     parse.add_argument('--data-path', type=str, default='data/nuscenes', help='path of the nuScenes dataset')
     parse.add_argument('--pred-path', type=str, default='predictions', help='path of the prediction data')
-    parse.add_argument('--vis-scene', type=list, default=['scene-0003', 'scene-0012', 'scene-0013', 'scene-0014'], help='visualize scene list')
+    parse.add_argument('--vis-scene', type=list, default=['scene-0275'], help='visualize scene list')
     parse.add_argument('--vis-path', type=str, default='demo_out', help='path of saving the visualization images')
     parse.add_argument('--single-data-path', type=str, default=None, help='single data path for visualization')
+    parse.add_argument('--car-model-data-path', type=str, default=None, help='car model for visualization')
+    parse.add_argument('--dataset_type', type=str, default='occ3d', help='dataset type')
     args = parse.parse_args()
     return args
 
@@ -132,14 +134,15 @@ def change_occupancy_to_bev(occ_semantics, occ_size, free_cls=16):
     return occ_bev_vis
 
 
-def vis_occ_on_bev(vis_scenes_infos, vis_scene, vis_path, pred_path, vis_gt=True):
+def vis_occ_on_bev(vis_scenes_infos, vis_scene, vis_path, pred_path, dataset_type, vis_gt=True):
     for scene_name in vis_scene:
         scene_infos = vis_scenes_infos[scene_name]
         vis_bev_semantics = []
         for info in scene_infos:
             if vis_gt:
                 occ_path = info['occ_path']
-                occ_path = occ_path.replace('gts', 'openocc_v2')
+                if dataset_type == 'openocc':
+                    occ_path = occ_path.replace('gts', 'openocc_v2')
                 occ_label_path = os.path.join(occ_path, 'labels.npz')
                 occ_label = np.load(occ_label_path)
                 occ_semantics = occ_label['semantics']
@@ -173,10 +176,34 @@ def vis_occ_on_3d(vis_scenes_infos,
                   vis_path,
                   pred_path,
                   single_data_path=None,
-                  free_cls=16,
+                  dataset_type='occ3d',
+                  load_camera_mask=False,
+                  voxel_size=(0.4, 0.4, 0.4),
                   vis_gt=True,
                   vis_flow=False,
+                  car_model=None,
                   background_color=(255, 255, 255)):
+    # check free_cls:
+    if dataset_type == 'openocc':
+        free_cls = 16
+    elif dataset_type == 'occ3d':
+        free_cls = 17
+
+    if car_model is not None:
+        car_model_mesh = o3d.io.read_triangle_mesh(car_model)
+        angle = np.pi / 2  # 90 度
+        R = car_model_mesh.get_rotation_matrix_from_axis_angle(np.array([angle, 0, 0]))
+        car_model_mesh.rotate(R, center=car_model_mesh.get_center())
+        car_model_mesh.scale(0.25, center=car_model_mesh.get_center())
+        current_center = car_model_mesh.get_center()
+        new_center = np.array([0, 0, 0.5])
+        translation = new_center - current_center
+        car_model_mesh.translate(translation)
+        car_model_mesh.compute_vertex_normals()
+
+    else:
+        car_model_mesh = None
+
     # check vis path
     mmcv.mkdir_or_exist(vis_path)
 
@@ -192,7 +219,8 @@ def vis_occ_on_3d(vis_scenes_infos,
             if single_data_path is None:
                 if vis_gt:
                     occ_path = info['occ_path']
-                    occ_path = occ_path.replace('gts', 'openocc_v2')
+                    if dataset_type == 'openocc':
+                        occ_path = occ_path.replace('gts', 'openocc_v2')
                     occ_label_path = os.path.join(occ_path, 'labels.npz')
                     occ_label = np.load(occ_label_path)
                     occ_semantics = occ_label['semantics']
@@ -200,38 +228,42 @@ def vis_occ_on_3d(vis_scenes_infos,
                         occ_flow = occ_label['flow']    # only support for openoccv2
                     else:
                         occ_flow = None
+
+                    if load_camera_mask:
+                        assert 'mask_camera' in occ_label.keys()
+                        mask_camera = occ_label['mask_camera']
+                        occ_semantics[mask_camera == 0] = 255
+
                 else:
                     token = info['token']
                     occ_label_path = os.path.join(pred_path, token + '.npz')
                     occ_label = np.load(occ_label_path)
                     occ_semantics = occ_label['semantics']
-                    if vis_flow:
-                        occ_flow = occ_label['flow']
-                    else:
-                        occ_flow = None
+                    occ_flow = occ_label['flow'] if vis_flow else None
+
             # visualize single data
             else:
                 occ_label = np.load(single_data_path)
                 occ_semantics = occ_label['semantics']
-                if vis_flow:
-                    occ_flow = occ_label['flow']
-                else:
-                    occ_flow = None
+                occ_flow = occ_label['flow'] if vis_flow else None
+
             # if view json exits
             occ_visualizer = OccupancyVisualizer(color_map=color_map, background_color=background_color)
             if os.path.exists('view.json'):
                 param = o3d.io.read_pinhole_camera_parameters('view.json')
             else:
                 param = None
+
             occ_visualizer.vis_occ(
                 occ_semantics,
                 occ_flow,
-                ignore_labels=[free_cls],
-                voxelSize=(0.4, 0.4, 0.4),
+                ignore_labels=[free_cls, 255],
+                voxelSize=voxel_size,
                 range=[-40.0, -40.0, -1.0, 40.0, 40.0, 5.4],
                 save_path=save_path,
                 wait_time=-1,  # 1s, -1 means wait until press q
                 view_json=param,
+                car_model_mesh=car_model_mesh
             )
             # press top-right x to close the windows
             param = occ_visualizer.o3d_vis.get_view_control().convert_to_pinhole_camera_parameters()
@@ -308,14 +340,15 @@ def create_legend_circle(radius=1, resolution=500):
     return legend_image
 
 if __name__ == '__main__':
+    print('open3d version:{}, make sure using 0.16.0'.format(o3d.__version__))
     args = parse_args()
     # check vis path
     mmcv.mkdir_or_exist(args.vis_path)
 
-    pkl_file = 'data/nuscenes/bevdetv3-nuscenes_infos_val.pkl'  # generate by mmdet3d
+    pkl_file = 'data/nuscenes/nus-infos/bevdetv3-nuscenes_infos_val.pkl'  # generate by mmdet3d
     pkl_data = mmcv.load(pkl_file)
     nusc = NuScenes('v1.0-trainval', args.data_path)
-    vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene)
+    vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene, )
     # visualize imgs
     # scene_extrinsic = vis_image(vis_scenes_infos, args.vis_scene, args.vis_path)
 
@@ -323,7 +356,10 @@ if __name__ == '__main__':
     # vis_occ_on_bev(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True)
 
     # visualizer occupancy on 3d, gt
-    # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True, vis_flow=False)
+    vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, load_camera_mask=True, vis_gt=True, vis_flow=False, car_model=args.car_model_data_path)
+
+    # visualizer single occupancy on 3d, pred
+    # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=True, single_data_path=args.single_data_path, voxel_size=(3.2, 3.2, 3.2))
 
     # visualize occupancy on bev plane, pred
     # vis_occ_on_bev(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False)
@@ -335,4 +371,4 @@ if __name__ == '__main__':
     # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False, vis_flow=True)
 
     # visualizer single occupancy on 3d, pred
-    vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False, single_data_path=args.single_data_path)
+    # vis_occ_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, vis_gt=False, single_data_path=args.single_data_path)

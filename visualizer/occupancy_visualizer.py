@@ -88,7 +88,7 @@ class OccupancyVisualizer(Visualizer):
         o3d_vis.register_key_action_callback(glfw_key_space,
                                              self.space_action_callback)
         o3d_vis.register_key_callback(glfw_key_right, self.right_callback)
-        o3d_vis.create_window()
+        o3d_vis.create_window(width=1920, height=1080)
 
         self.view_control = o3d_vis.get_view_control()
 
@@ -210,6 +210,7 @@ class OccupancyVisualizer(Visualizer):
                           mode='xyzrgb',
                           points_color: Tuple[float] = (0.8, 0.8, 0.8),
                           show_color=True,
+                          car_model_mesh=None,
                           ):
         if not hasattr(self, 'o3d_vis'):
             self.o3d_vis = self._initialize_o3d_vis()
@@ -253,6 +254,8 @@ class OccupancyVisualizer(Visualizer):
         # create coordinate frame
         mesh_frame = geometry.TriangleMesh.create_coordinate_frame(**frame_cfg)
         self.o3d_vis.add_geometry(mesh_frame)
+        if car_model_mesh is not None:
+            self.o3d_vis.add_geometry(car_model_mesh)
 
         if show_color:
             # update pcd
@@ -270,6 +273,7 @@ class OccupancyVisualizer(Visualizer):
                 range=(-40.0, -40.0, -1.0, 40.0, 40.0, 5.4),
                 vis_mode='add',
                 wait_time=-1,
+                car_model_mesh=None,
                 show_color=True) -> None:
         if hasattr(self, 'o3d_vis'):
             self.o3d_vis = self._initialize_o3d_vis()
@@ -284,7 +288,10 @@ class OccupancyVisualizer(Visualizer):
             vy = occ_flow[..., 1]
             pts_color = self.flow_to_color(vx, vy)
         seg_color = np.concatenate([points[:, :3], pts_color], axis=1)
-        ego_points = self._generate_the_ego_car()
+        if car_model_mesh is None:
+            ego_points = self._generate_the_ego_car()
+        else:
+            ego_points = None
 
         bboxes = self._voxel_profile(torch.tensor(points), voxel_size=voxelSize)
         bboxes_corners = self._my_compute_box_3d(bboxes[:, 0:3], bboxes[:, 3:6], bboxes[:, 6:7])
@@ -303,6 +310,7 @@ class OccupancyVisualizer(Visualizer):
             mode='xyzrgb',
             vis_mode=vis_mode,
             show_color=show_color,
+            car_model_mesh=car_model_mesh,
         )
 
         self.show(

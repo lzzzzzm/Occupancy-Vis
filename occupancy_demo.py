@@ -340,7 +340,7 @@ def create_legend_circle(radius=1, resolution=500):
     return legend_image
 
 if __name__ == '__main__':
-    print('open3d version:{}, make sure using 0.16.0'.format(o3d.__version__))
+    print('open3d version: {}, if you want to use viewcontrol, make sure using 0.16.0 version!!'.format(o3d.__version__))
     args = parse_args()
     # check vis path
     mmcv.mkdir_or_exist(args.vis_path)

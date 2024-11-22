@@ -150,6 +150,8 @@ class LidarVisualizer(Visualizer):
         if view_json is not None:
             self.view_control.convert_from_pinhole_camera_parameters(view_json)
 
+        self.o3d_vis.capture_screen_image("screenshot.png")  # 保存截图
+
         if hasattr(self, 'o3d_vis'):
             if hasattr(self, 'view_port'):
                 self.view_control.convert_from_pinhole_camera_parameters(

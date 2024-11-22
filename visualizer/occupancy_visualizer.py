@@ -274,6 +274,7 @@ class OccupancyVisualizer(Visualizer):
                 vis_mode='add',
                 wait_time=-1,
                 car_model_mesh=None,
+                use_car_model=False,
                 show_color=True) -> None:
         if hasattr(self, 'o3d_vis'):
             self.o3d_vis = self._initialize_o3d_vis()
@@ -288,8 +289,11 @@ class OccupancyVisualizer(Visualizer):
             vy = occ_flow[..., 1]
             pts_color = self.flow_to_color(vx, vy)
         seg_color = np.concatenate([points[:, :3], pts_color], axis=1)
-        if car_model_mesh is None:
-            ego_points = self._generate_the_ego_car()
+        if use_car_model:
+            if car_model_mesh is None:
+                ego_points = self._generate_the_ego_car()
+            else:
+                ego_points = None
         else:
             ego_points = None
 

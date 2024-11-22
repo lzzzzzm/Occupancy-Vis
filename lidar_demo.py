@@ -1,5 +1,6 @@
 import os
 
+import cv2
 import matplotlib.pyplot as plt
 import mmcv
 import numpy as np
@@ -41,7 +42,7 @@ def parse_args():
     parse = argparse.ArgumentParser('')
     parse.add_argument('--data-path', type=str, default='data/nuscenes', help='path of the nuScenes dataset')
     parse.add_argument('--pred-path', type=str, default='predictions', help='path of the prediction data')
-    parse.add_argument('--vis-scene', type=list, default=['scene-0275'], help='visualize scene list')
+    parse.add_argument('--vis-scene', type=list, default=['scene-0922'], help='visualize scene list')
     parse.add_argument('--vis-path', type=str, default='demo_out', help='path of saving the visualization images')
     parse.add_argument('--single-data-path', type=str, default=None, help='single data path for visualization')
     parse.add_argument('--car-model-data-path', type=str, default=None, help='car model for visualization')
@@ -314,17 +315,73 @@ def vis_lidar_on_img(vis_scenes_infos, vis_scene):
 
                 vis_depth(img, depth_map)
 
-def vis_lidar_on_3d(vis_scenes_infos, vis_scene):
+def map_to_bev(lidar_points):
+    bev_w = 200
+    bev_h = 200
+    res = 0.4
+    bev_image = np.zeros((bev_h, bev_w, 3))
+    point_cloud_range = [-40.0, -40.0, 40.0, 40.0]
+    max_distance = np.sqrt(np.max(lidar_points[:, 0] ** 2 + lidar_points[:, 1] ** 2))
+    # 将点云坐标转换为BEV坐标
+    for point in lidar_points:
+        x, y, z = point
+        if x < point_cloud_range[0] or x >= point_cloud_range[2] or y < point_cloud_range[1] or y >= point_cloud_range[3]:
+            continue
+        # 转换为BEV图像坐标
+        bev_x = x / res + bev_w / 2
+        bev_y = y / res + bev_h / 2
+        distance = np.sqrt(x ** 2 + y ** 2) * 10
+        bev_x = int(bev_x)
+        bev_y = int(bev_y)
+
+        if 0 <= bev_x < bev_w and 0 <= bev_y < bev_h:
+            # 根据距离上色，这里使用简单的线性映射，您可以根据需要调整颜色映射函数
+            color_value = 177
+            # 将颜色值应用到BEV图像的RGB通道
+            bev_image[bev_y, bev_x] = [color_value, color_value, color_value]  # 灰度值，可以根据需要调整为RGB颜色
+
+    # change a-xis to y-axis
+    bev_image = np.transpose(bev_image, (1, 0, 2))
+    bev_image = bev_image.astype(np.uint8)
+
+    return bev_image
+
+
+def vis_lidar_on_3d(vis_scenes_infos, vis_scene, map_bev=False):
+    bev_w = 200
+    bev_h = 200
+    res = 0.4
+    save_imgs = []
     for scene_name in vis_scene:
         scene_infos = vis_scenes_infos[scene_name]
         vis_lidar_points = []
         for info in scene_infos:
             lidar_points = np.fromfile(info['lidar_path'], dtype=np.float32).reshape(-1, 5)[:, :3]
-            vis_lidar_points.append(lidar_points)
+            # change x-y axis
+            lidar_points[:, 0], lidar_points[:, 1] = lidar_points[:, 1], -lidar_points[:, 0]
+            if map_bev:
+                bev_image = map_to_bev(lidar_points)
+                cv2.namedWindow('bev', cv2.WINDOW_NORMAL)
+                cv2.resizeWindow('bev', 400, 400)
+                cv2.imshow('bev', bev_image)
+                cv2.waitKey(0)
 
-            lidar_vis = LidarVisualizer(color_map=color_map)
-            lidar_vis.vis_lidar_points(lidar_points)
-            lidar_vis.o3d_vis.destroy_window()
+                save_imgs.append(bev_image)
+            else:
+                vis_lidar_points.append(lidar_points)
+
+                lidar_vis = LidarVisualizer(color_map=color_map)
+                lidar_vis.vis_lidar_points(lidar_points)
+                lidar_vis.o3d_vis.destroy_window()
+    # wirte to video
+    if map_bev:
+        fourcc = cv.VideoWriter_fourcc(*'XVID')
+        video_path = 'demo_out/' + 'bev_' + scene_name + '.avi'
+        video = cv.VideoWriter(video_path, fourcc, 5, (bev_image.shape[0], bev_image.shape[1]))
+        for img in save_imgs:
+            video.write(img)
+        video.release()
+        print('Save video to {}'.format(video_path))
 
 
 if __name__ == '__main__':
@@ -336,9 +393,9 @@ if __name__ == '__main__':
     pkl_file = 'data/nuscenes/nus-infos/bevdetv3-nuscenes_infos_val.pkl'  # generate by mmdet3d
     pkl_data = mmcv.load(pkl_file)
     nusc = NuScenes('v1.0-trainval', args.data_path)
-    vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene, )
+    vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene)
 
-    # vis_lidar_on_3d(vis_scenes_infos, args.vis_scene)
+    vis_lidar_on_3d(vis_scenes_infos, args.vis_scene, map_bev=True)
 
-    vis_lidar_on_img(vis_scenes_infos, args.vis_scene)
+    # vis_lidar_on_img(vis_scenes_infos, args.vis_scene)
 

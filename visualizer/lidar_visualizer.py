@@ -102,7 +102,7 @@ class LidarVisualizer(Visualizer):
                          frame_cfg: dict = dict(size=1, origin=[0, 0, 0]),
                          save_path=None,
                          wait_time=-1,
-                         view_json=None
+                         view_json=None,
                          ):
         if not hasattr(self, 'o3d_vis'):
             self.o3d_vis = self._initialize_o3d_vis()
@@ -117,8 +117,7 @@ class LidarVisualizer(Visualizer):
         pcd = geometry.PointCloud()
         if mode == 'xyz':
             pcd.points = o3d.utility.Vector3dVector(points[:, :3])
-            points_colors = np.tile(
-                np.array(points_color), (points.shape[0], 1))
+            points_colors = np.tile(np.array(points_color), (points.shape[0], 1))
         elif mode == 'xyzrgb':
             pcd.points = o3d.utility.Vector3dVector(points[:, :3])
             points_colors = points[:, 3:6]

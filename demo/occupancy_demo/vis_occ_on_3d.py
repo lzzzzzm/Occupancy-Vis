@@ -246,7 +246,6 @@ def vis_occ_single_on_3d(data_path,
     else:
         car_model_mesh = None
 
-
     # visualize the scene data
     occ_label = np.load(data_path)
     occ_semantics = occ_label['semantics']

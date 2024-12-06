@@ -15,27 +15,32 @@ from visualizer import OccupancyVisualizer
 from pyquaternion import Quaternion
 import open3d as o3d
 import colorsys
-color_map = np.array(
+
+occ3d_colors_map = np.array(
     [
+        [0, 0, 0],          # others               black
         [255, 120, 50],     # barrier              orange
-        [255, 192, 203],    # bicycle              pink
-        [255, 255, 0],      # bus                  yellow
-        [0, 150, 245],      # car                  blue
-        [0, 255, 255],      # construction_vehicle cyan
-        [255, 127, 0],      # motorcycle           dark orange
-        [255, 0, 0],        # pedestrian           red
+        [255, 192, 203],    # bicycle              pink         √
+        [255, 255, 0],      # bus                  yellow       √
+        [0, 150, 245],      # car                  blue         √
+        [0, 255, 255],      # construction_vehicle cyan         √
+        [255, 127, 0],      # motorcycle           dark orange  √
+        [255, 0, 0],        # pedestrian           red          √
         [255, 240, 150],    # traffic_cone         light yellow
-        [135, 60, 0],       # trailer              brown
-        [160, 32, 240],     # truck                purple
+        [135, 60, 0],       # trailer              brown        √
+        [160, 32, 240],     # truck                purple       √
         [255, 0, 255],      # driveable_surface    dark pink
         [139, 137, 137],    # other_flat           dark red
         [75, 0, 75],        # sidewalk             dard purple
         [150, 240, 80],     # terrain              light green
         [230, 230, 250],    # manmade              white
         [0, 175, 0],        # vegetation           green
-        [255, 255, 255]     # free                 white
+        [255, 255, 255],    # Free                 White
     ]
 )
+# change to BGR
+occ3d_colors_map = occ3d_colors_map[:, ::-1]
+
 openocc_colors_map = np.array(
     [
         [0, 150, 245],      # car                  blue         √
@@ -66,9 +71,9 @@ def parse_args():
     parse.add_argument('--pkl-file', type=str, default='data/nuscenes/nus-infos/bevdetv3-nuscenes_infos_val.pkl', help='path of pkl for the nuScenes dataset')
     parse.add_argument('--data-path', type=str, default='data/nuscenes', help='path of the nuScenes dataset')
     parse.add_argument('--data-version', type=str, default='v1.0-trainval', help='version of the nuScenes dataset')
-    parse.add_argument('--dataset-type', type=str, default='openocc', help='version of the nuScenes dataset')
-    parse.add_argument('--pred-path', type=str, default='scene-0274', help='version of the nuScenes dataset')
-    parse.add_argument('--vis-scene', type=list, default=['scene-0274'], help='visualize scene list')
+    parse.add_argument('--dataset-type', type=str, default='occ3d', help='version of the nuScenes dataset')
+    parse.add_argument('--pred-path', type=str, default='scene-0331', help='version of the nuScenes dataset')
+    parse.add_argument('--vis-scene', type=list, default=['scene-0331'], help='visualize scene list')
     parse.add_argument('--vis-path', type=str, default='demo_out', help='path of saving the visualization images')
     parse.add_argument('--car-model', type=str, default='3d_model.obj', help='car_model path')
     parse.add_argument('--vis-single-data', type=str, default='scene-0274/1fa5506ca31d4174955140d2138db679.npz',help='single path of the visualization data')
@@ -171,7 +176,8 @@ def vis_occ_scene_on_3d(vis_scenes_infos,
                     occ_flow = None
 
             # if view json exits
-            occ_visualizer = OccupancyVisualizer(color_map=color_map, background_color=background_color)
+            occ_visualizer = OccupancyVisualizer(color_map=occ3d_colors_map if dataset_type == 'occ3d' else openocc_colors_map,
+                                                 background_color=background_color)
             if os.path.exists('view.json'):
                 param = o3d.io.read_pinhole_camera_parameters('view.json')
             else:
@@ -184,7 +190,7 @@ def vis_occ_scene_on_3d(vis_scenes_infos,
                 voxelSize=voxel_size,
                 range=[-40.0, -40.0, -1.0, 40.0, 40.0, 5.4],
                 save_path=save_path,
-                wait_time=0.5,  # 1s, -1 means wait until press q
+                wait_time=-1,  # 1s, -1 means wait until press q
                 view_json=param,
                 car_model_mesh=car_model_mesh,
             )
@@ -259,7 +265,8 @@ def vis_occ_single_on_3d(data_path,
         occ_flow = None
 
     # if view json exits
-    occ_visualizer = OccupancyVisualizer(color_map=color_map, background_color=background_color)
+    occ_visualizer = OccupancyVisualizer(color_map=occ3d_colors_map if dataset_type=='occ3d' else openocc_colors_map,
+                                         background_color=background_color)
 
     occ_visualizer.vis_occ(
         occ_semantics,
@@ -322,16 +329,16 @@ if __name__ == '__main__':
     nusc = NuScenes(args.data_version, args.data_path)
     vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene)
     # GT visualization
-    vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=True, car_model=args.car_model)
-    # Pred visualization
+    # vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=True, car_model=args.car_model)
+    # # Pred visualization
     vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=False, car_model=args.car_model)
-    # Single data visualization
-    vis_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=False)
-    # GT Flow visualization
-    vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=True, vis_flow=True, car_model=args.car_model)
-    # Pred Flow visualization
-    vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=False, vis_flow=True, car_model=args.car_model)
-    # Single Flow data visualization
-    vis_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=True)
+    # # Single data visualization
+    # vis_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=False)
+    # # GT Flow visualization
+    # vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=True, vis_flow=True, car_model=args.car_model)
+    # # Pred Flow visualization
+    # vis_occ_scene_on_3d(vis_scenes_infos, args.vis_scene, args.vis_path, args.pred_path, dataset_type=args.dataset_type, vis_gt=False, vis_flow=True, car_model=args.car_model)
+    # # Single Flow data visualization
+    # vis_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=True)
 
 

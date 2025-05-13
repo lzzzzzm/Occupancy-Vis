@@ -369,7 +369,6 @@ if __name__ == '__main__':
     args = parse_args()
     # check vis path
     mmcv.mkdir_or_exist(args.vis_path)
-
     pkl_data = mmcv.load(args.pkl_file)
 
     vis_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=False)

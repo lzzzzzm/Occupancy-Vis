@@ -93,12 +93,12 @@ def parse_args():
     parse.add_argument('--pkl-file', type=str, default='data/nuscenes/nus-infos/bevdetv3-nuscenes_infos_val.pkl', help='path of pkl for the nuScenes dataset')
     parse.add_argument('--data-path', type=str, default='data/nuscenes', help='path of the nuScenes dataset')
     parse.add_argument('--data-version', type=str, default='v1.0-trainval', help='version of the nuScenes dataset')
-    parse.add_argument('--dataset-type', type=str, default='waymo', help='version of the nuScenes dataset')
+    parse.add_argument('--dataset-type', type=str, default='occ3d', help='version of the nuScenes dataset')
     parse.add_argument('--pred-path', type=str, default='scene-0331', help='version of the nuScenes dataset')
     parse.add_argument('--vis-scene', type=list, default=['scene-0331'], help='visualize scene list')
     parse.add_argument('--vis-path', type=str, default='demo_out', help='path of saving the visualization images')
     parse.add_argument('--car-model', type=str, default='3d_model.obj', help='car_model path')
-    parse.add_argument('--vis-single-data', type=str, default='data/nuscenes/gts/scene-0010/0f160877acfe48379c9ee87ca96a86f7/labels.npz',help='single path of the visualization data')
+    parse.add_argument('--vis-single-data', type=str, default='scene-0003/1c8ec6c1dd614d3fb8b8849dc8756a9a.npz',help='single path of the visualization data')
 
     args = parse.parse_args()
     return args
@@ -335,14 +335,100 @@ def vis_occ_single_on_3d(data_path,
         ignore_labels=[free_cls, 255],
         voxelSize=voxel_size,
         range=[-40.0, -40.0, -1.0, 40.0, 40.0, 5.4],
-        save_path=None,
-        wait_time=-1,  # 1s, -1 means wait until press q
+        save_path='demo_out',
+        wait_time=1,  # 1s, -1 means wait until press q
         view_json=param,
         car_model_mesh=car_model_mesh,
     )
     param = occ_visualizer.o3d_vis.get_view_control().convert_to_pinhole_camera_parameters()
     o3d.io.write_pinhole_camera_parameters('view.json', param)
     occ_visualizer.o3d_vis.destroy_window()
+
+
+def vis_forecast_occ_single_on_3d(data_path,
+                        dataset_type='occ3d',
+                        voxel_size=(0.4, 0.4, 0.4),
+                        car_model=None,
+                        vis_flow=False,
+                        background_color=(255, 255, 255),
+                        ):
+    # Define free_cls
+    if dataset_type == 'openocc':
+        free_cls = 16
+        color_map = openocc_colors_map
+    elif dataset_type == 'occ3d':
+        free_cls = 17
+        color_map = occ3d_colors_map
+    elif dataset_type == 'waymo':
+        free_cls = 17
+        color_map = occ3d_colors_map
+    else:
+        raise ValueError('dataset type is not supported')
+
+    # Load car model
+    car_model_mesh = load_car_model(car_model)
+
+    # Load view json
+    param = o3d.io.read_pinhole_camera_parameters('view.json') if os.path.exists('view.json') else None
+
+
+    # Load the scene data
+    occ_label = np.load(data_path)
+    if dataset_type == 'waymo':
+        occ_semantics = occ_label['voxel_label']
+        # map waymo_cls to Occ3D
+        map_semantics = copy.deepcopy(occ_semantics)
+        for key, value in waymo_map.items():
+            map_semantics[occ_semantics == key] = value
+        occ_semantics = map_semantics
+    else:
+        occ_semantics = occ_label['semantics']
+
+    if vis_flow:
+        # check if flow exists
+        if 'flow' in occ_label.keys():
+            occ_flow = occ_label['flow']
+        if 'flows' in occ_label.keys():
+            occ_flow = occ_label['flows']
+    else:
+        occ_flow = None
+
+    for index, semantics in enumerate(occ_semantics):
+        # if view json exits
+        occ_visualizer = OccupancyVisualizer(
+            color_map=color_map,
+            background_color=background_color
+        )
+        save_path = os.path.join('demo_out', str(index))
+        occ_visualizer.vis_occ(
+            semantics,
+            occ_flow=occ_flow,
+            ignore_labels=[free_cls, 255],
+            voxelSize=voxel_size,
+            range=[-40.0, -40.0, -1.0, 40.0, 40.0, 5.4],
+            save_path=save_path,
+            wait_time=-1,  # 1s, -1 means wait until press q
+            view_json=param,
+            car_model_mesh=car_model_mesh,
+        )
+        param = occ_visualizer.o3d_vis.get_view_control().convert_to_pinhole_camera_parameters()
+        o3d.io.write_pinhole_camera_parameters('view.json', param)
+        occ_visualizer.o3d_vis.destroy_window()
+
+    # create video
+    vis_occ_semantics = []
+    for i in range(index + 1):
+        img_path = os.path.join('demo_out', str(i) + '.png')
+        img = cv.imread(img_path)
+        vis_occ_semantics.append(img)
+        os.remove(img_path)
+    # save video
+    fourcc = cv.VideoWriter_fourcc(*'XVID')
+    save_video = 'demo_out/forecast_occ.avi'
+    video = cv.VideoWriter(save_video, fourcc, 5, (img.shape[1], img.shape[0]))
+    for img in vis_occ_semantics:
+        video.write(img)
+    video.release()
 
 def create_legend_circle(radius=1, resolution=500):
     x = np.linspace(-radius, radius, resolution)
@@ -371,7 +457,7 @@ if __name__ == '__main__':
     mmcv.mkdir_or_exist(args.vis_path)
     pkl_data = mmcv.load(args.pkl_file)
 
-    vis_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=False)
+    vis_forecast_occ_single_on_3d(args.vis_single_data, dataset_type=args.dataset_type, car_model=args.car_model, vis_flow=False)
 
     # nusc = NuScenes(args.data_version, args.data_path)
     # vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene)

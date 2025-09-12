@@ -17,6 +17,7 @@ import open3d as o3d
 import colorsys
 color_map = np.array(
     [
+        [0, 0, 0],          # unlabeled            black
         [255, 120, 50],     # barrier              orange
         [255, 192, 203],    # bicycle              pink
         [255, 255, 0],      # bus                  yellow
@@ -66,11 +67,11 @@ def parse_args():
     parse.add_argument('--pkl-file', type=str, default='data/nuscenes/nus-infos/bevdetv3-nuscenes_infos_val.pkl', help='path of pkl for the nuScenes dataset')
     parse.add_argument('--data-path', type=str, default='data/nuscenes', help='path of the nuScenes dataset')
     parse.add_argument('--data-version', type=str, default='v1.0-trainval', help='version of the nuScenes dataset')
-    parse.add_argument('--dataset-type', type=str, default='openocc', help='version of the nuScenes dataset')
+    parse.add_argument('--dataset-type', type=str, default='occ3d', help='version of the nuScenes dataset')
     parse.add_argument('--pred-path', type=str, default='scene-0274', help='version of the nuScenes dataset')
     parse.add_argument('--vis-scene', type=list, default=['scene-0274'], help='visualize scene list')
     parse.add_argument('--vis-path', type=str, default='demo_out', help='path of saving the visualization images')
-    parse.add_argument('--vis-single-data', type=str, default='scene-0274/1fa5506ca31d4174955140d2138db679.npz', help='single path of the visualization data')
+    parse.add_argument('--vis-single-data', type=str, default='scene-0277/pred/ef710f7aad4c4bcf9ac21ef155c8c3d1.npz', help='single path of the visualization data')
     args = parse.parse_args()
     return args
 
@@ -169,19 +170,44 @@ def vis_single_occ_on_bev(data_path, dataset_type):
     cv.imshow('bev_semantics', bev_semantics)
     cv.waitKey()
 
+def vis_forecast_occ_on_bev(data_path, dataset_type):
+    occ_label = np.load(data_path)
+    occ_semantics = occ_label['semantics']
+
+    vis_semantics = []
+    for semantics in occ_semantics:
+        bev_semantics = change_occupancy_to_bev(
+            semantics,
+            occ_size=(semantics.shape[0], semantics.shape[1], semantics.shape[2]),
+            free_cls=16 if dataset_type=='openocc' else 17,
+            colors=openocc_colors_map if dataset_type=='openocc' else color_map
+        )
+        bev_semantics = cv.cvtColor(bev_semantics, cv.COLOR_BGR2RGB)
+        vis_semantics.append(bev_semantics)
+
+
+    for i, bev_semantics in enumerate(vis_semantics):
+        # plt.subplot(1, len(vis_semantics), i + 1)
+        plt.figure()
+        plt.imshow(bev_semantics)
+        plt.axis('off')
+        plt.savefig('forecast_occ_bev_{}.png'.format(i), bbox_inches='tight', pad_inches=0.1, dpi=300)
+    # plt.savefig('forecast_occ_bev.png', bbox_inches='tight', pad_inches=0.1, dpi=300)
 
 if __name__ == '__main__':
     print('open3d version: {}, if you want to use viewcontrol, make sure using 0.16.0 version!!'.format(o3d.__version__))
     args = parse_args()
     # check vis path
     mmcv.mkdir_or_exist(args.vis_path)
-
-    pkl_data = mmcv.load(args.pkl_file)
-    nusc = NuScenes(args.data_version, args.data_path)
-    vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene)
-    # GT visualization
-    vis_scene_occ_on_bev(vis_scenes_infos, args.vis_path,  args.pred_path, args.dataset_type, vis_gt=True)
-    # Prediction visualization
-    vis_scene_occ_on_bev(vis_scenes_infos, args.vis_path,  args.pred_path, args.dataset_type, vis_gt=False)
-    # Visualize single data
-    vis_single_occ_on_bev(args.vis_single_data, args.dataset_type)
+    #
+    # pkl_data = mmcv.load(args.pkl_file)
+    # nusc = NuScenes(args.data_version, args.data_path)
+    # vis_scenes_infos = arange_according_to_scene(pkl_data['infos'], nusc, args.vis_scene)
+    # # GT visualization
+    # vis_scene_occ_on_bev(vis_scenes_infos, args.vis_path,  args.pred_path, args.dataset_type, vis_gt=True)
+    # # Prediction visualization
+    # vis_scene_occ_on_bev(vis_scenes_infos, args.vis_path,  args.pred_path, args.dataset_type, vis_gt=False)
+    # # Visualize single data
+    # vis_single_occ_on_bev(args.vis_single_data, args.dataset_type)
+    # Visualize forecast data
+    vis_forecast_occ_on_bev(args.vis_single_data, args.dataset_type)

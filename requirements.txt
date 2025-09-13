@@ -1,0 +1,4 @@
+opencv-python
+open3d==0.16
+nuscenes-devkit
+numpy==1.22.4

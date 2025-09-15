@@ -24,7 +24,26 @@ A comprehensive guide for visualizing 3D occupancy grid data with semantic segme
 - **Value Range**: `[0, num_classes-1]` temporal sequence of occupancy grids
 - **Description**: Time series of 3D occupancy grids for dynamic scenes
 
-#### **4. Nuscenes-Occ3D Data Format**
+#### **4. Point Cloud Data** 
+- **Points Shape**: `(n, 3)` - Number_of_Points × XYZ_Coordinates
+- **Labels Shape**: `(n,)` - Optional semantic labels for each point
+- **Colors Shape**: `(n, 3)` - Optional RGB colors for each point [0-255]
+- **Data Types**: 
+  - Points: `float32` or `float64`
+  - Labels: `int32` or `int64`
+  - Colors: `uint8` or `float32`
+- **Description**: Direct point cloud data for LiDAR, 3D reconstructions, or sparse 3D data
+- **Supported Formats**: `.npz`, `.npy`, `.txt`, `.pcd`, `.ply`
+
+#### **5. Point Cloud Sequence Data** 
+- **Points Sequence**: List of arrays, each with shape `(n_i, 3)`
+- **Labels Sequence**: List of arrays, each with shape `(n_i,)` (optional)
+- **Colors Sequence**: List of arrays, each with shape `(n_i, 3)` (optional)
+- **Description**: Temporal sequences of point cloud data with varying point counts
+- **Use Cases**: LiDAR sequences, moving sensor data, temporal 3D reconstruction
+
+
+#### **6. Nuscenes-Occ3D Data Format**
 
 - **Shape**: `(H, W, D)` - Height × Width × Depth
 - **Data Type**: Integer (typically `int32` or `int64`)
@@ -255,6 +274,21 @@ visualizer.visualize_occupancy(
 | `VisualizationMode.FLOW` | Show optical flow vectors | occupancy_data + flow_data |
 | `VisualizationMode.COMBINED` | Show both semantic and flow | occupancy_data + flow_data |
 
+### Factory Methods
+
+#### Occupancy Visualizers
+| Method | Description | Best For |
+|--------|-------------|----------|
+| `create_occ3d_visualizer()` | OCC3D dataset colors | Standard occupancy grids |
+| `create_openocc_visualizer()` | OpenOCC dataset colors | OpenOCC format data |
+| `create_flow_visualizer()` | Optimized for flow data | Motion visualization |
+
+#### Point Cloud Visualizers
+| Method | Description | Best For |
+|--------|-------------|----------|
+| `create_point_cloud_visualizer()` | General point cloud visualization | Any point cloud data |
+| `create_lidar_visualizer()` | Optimized for LiDAR data | Automotive LiDAR scans |
+| `create_point_cloud_batch_processor()` | Batch processing with video output | Point cloud sequences |
 
 ### Color Schemes
 
@@ -273,7 +307,6 @@ visualizer.visualize_occupancy(
 | `video_format` | str | 'mp4' | Video format ('mp4', 'avi', 'gif') |
 | `video_quality` | int | 5 | Video quality (1-10, higher is better) |
 | `create_preview` | bool | True | Generate preview images |
-
 
 ## 🐛 Troubleshooting
 

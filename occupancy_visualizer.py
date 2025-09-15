@@ -685,6 +685,63 @@ class InputValidator:
             raise OccupancyVisualizerError("Voxel data cannot be empty")
 
     @staticmethod
+    def validate_point_cloud_data(points: np.ndarray, labels: Optional[np.ndarray] = None,
+                                 colors: Optional[np.ndarray] = None) -> None:
+        """
+        Validate point cloud data format and shape.
+
+        Args:
+            points: Point cloud coordinates with shape (n, 3)
+            labels: Optional semantic labels with shape (n,)
+            colors: Optional RGB colors with shape (n, 3)
+
+        Raises:
+            OccupancyVisualizerError: If input validation fails
+        """
+        if not isinstance(points, np.ndarray):
+            raise OccupancyVisualizerError("Point cloud data must be a numpy array")
+
+        if points.ndim != 2:
+            raise OccupancyVisualizerError(f"Point cloud must be 2D array, got {points.ndim}D")
+
+        if points.shape[1] != 3:
+            raise OccupancyVisualizerError(f"Point cloud must have 3 coordinates (x, y, z), got {points.shape[1]}")
+
+        if points.shape[0] == 0:
+            raise OccupancyVisualizerError("Point cloud cannot be empty")
+
+        # Validate labels if provided
+        if labels is not None:
+            if not isinstance(labels, np.ndarray):
+                raise OccupancyVisualizerError("Point cloud labels must be a numpy array")
+
+            if labels.shape[0] != points.shape[0]:
+                raise OccupancyVisualizerError(
+                    f"Labels shape {labels.shape[0]} doesn't match points shape {points.shape[0]}")
+
+            if labels.ndim != 1:
+                raise OccupancyVisualizerError(f"Labels must be 1D array, got {labels.ndim}D")
+
+        # Validate colors if provided
+        if colors is not None:
+            if not isinstance(colors, np.ndarray):
+                raise OccupancyVisualizerError("Point cloud colors must be a numpy array")
+
+            if colors.shape[0] != points.shape[0]:
+                raise OccupancyVisualizerError(
+                    f"Colors shape {colors.shape[0]} doesn't match points shape {points.shape[0]}")
+
+            if colors.ndim != 2 or colors.shape[1] != 3:
+                raise OccupancyVisualizerError(f"Colors must have shape (n, 3), got {colors.shape}")
+
+            # Check color range
+            if colors.dtype == np.uint8:
+                if np.any(colors < 0) or np.any(colors > 255):
+                    logger.warning("Color values should be in range [0, 255] for uint8")
+            elif np.any(colors < 0) or np.any(colors > 1):
+                logger.warning("Color values appear to be outside [0, 1] range for float")
+
+    @staticmethod
     def validate_flow_data(flow: np.ndarray, voxel_shape: Tuple[int, ...]) -> None:
         """Validate flow input data."""
         if not isinstance(flow, np.ndarray):
@@ -1064,32 +1121,84 @@ class RenderManager:
 
         Args:
             points: Point coordinates with shape (N, 3)
-            colors: Point colors with shape (N, 3)
-            ego_points: Optional ego car points with shape (M, 6) [x,y,z,r,g,b]
+            colors: Point colors with shape (N, 3) in RGB format
+            ego_points: Optional ego car points with shape (M, 6) [x,y,z,r,g,b] (deprecated - use separate method)
 
         Returns:
-            Open3D point cloud object
+            Open3D point cloud object with proper color normalization
         """
-        # Combine with ego points if provided
+        if points.shape[0] == 0:
+            logger.warning("Creating empty point cloud")
+            return o3d.geometry.PointCloud()
+
+        # Create main point cloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+
+        # Handle color normalization and format
+        colors_normalized = self._normalize_colors(colors)
+        pcd.colors = o3d.utility.Vector3dVector(colors_normalized)
+
+        # Estimate normals for better rendering
+        pcd.estimate_normals()
+
+        # Remove duplicate points for better performance (if method exists)
+        try:
+            pcd = pcd.remove_duplicated_points()
+        except AttributeError:
+            # Method doesn't exist in this Open3D version, skip deduplication
+            pass
+
+        logger.debug(f"Created point cloud: {len(pcd.points)} points, colors range: {np.array(pcd.colors).min():.3f}-{np.array(pcd.colors).max():.3f}")
+
+        # Handle legacy ego points (deprecated approach)
         if ego_points is not None:
-            points = np.concatenate([points, ego_points[:, :3]], axis=0)
-            ego_colors = ego_points[:, 3:6]
-            colors = np.concatenate([colors, ego_colors], axis=0)
+            logger.warning("Using deprecated ego_points parameter. Use separate ego point cloud instead.")
+            ego_coords = ego_points[:, :3]
+            ego_colors = ego_points[:, 3:6] if ego_points.shape[1] >= 6 else np.full((ego_points.shape[0], 3), [255, 0, 0])
 
-        # Create point cloud
-        pcd = geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
+            # Combine points and colors
+            all_points = np.concatenate([points, ego_coords], axis=0)
+            all_colors = np.concatenate([colors, ego_colors], axis=0)
 
-        # Handle color normalization
-        if colors.dtype != np.float64:
-            colors = colors.astype(np.float64)
+            # Recreate point cloud with combined data
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(all_points.astype(np.float64))
+            pcd.colors = o3d.utility.Vector3dVector(self._normalize_colors(all_colors))
+            pcd.estimate_normals()
+            # Remove duplicate points for better performance (if method exists)
+            try:
+                pcd = pcd.remove_duplicated_points()
+            except AttributeError:
+                # Method doesn't exist in this Open3D version, skip deduplication
+                pass
 
-        if colors.max() > 1.0:
-            colors = colors / 255.0
+        return pcd
 
-        # Convert RGB to BGR for Open3D
-        colors = colors[:, [2, 1, 0]]  # RGB -> BGR
-        pcd.colors = o3d.utility.Vector3dVector(colors)
+    def _normalize_colors(self, colors: np.ndarray) -> np.ndarray:
+        """
+        Normalize colors to [0, 1] range for Open3D.
+
+        Args:
+            colors: Color array with shape (N, 3)
+
+        Returns:
+            Normalized colors in [0, 1] range
+        """
+        if colors.dtype == np.uint8:
+            # Convert from [0, 255] to [0, 1]
+            normalized = colors.astype(np.float64) / 255.0
+        elif colors.max() > 1.0:
+            # Assume [0, 255] range even if not uint8
+            normalized = colors.astype(np.float64) / 255.0
+        else:
+            # Already in [0, 1] range
+            normalized = colors.astype(np.float64)
+
+        # Ensure values are in valid range
+        normalized = np.clip(normalized, 0.0, 1.0)
+
+        return normalized
 
         return pcd
 
@@ -1386,6 +1495,102 @@ class OccupancyVisualizer:
 
         return success and not self.flag_exit
 
+    def visualize_point_cloud(self,
+                             points: np.ndarray,
+                             labels: Optional[np.ndarray] = None,
+                             colors: Optional[np.ndarray] = None,
+                             save_path: Optional[Union[str, Path]] = None,
+                             car_model_path: Optional[Union[str, Path]] = None,
+                             view_json_path: Optional[Union[str, Path]] = None) -> bool:
+        """
+        Visualize point cloud data directly.
+
+        Args:
+            points: Point cloud coordinates with shape (n, 3)
+            labels: Optional semantic labels with shape (n,)
+            colors: Optional RGB colors with shape (n, 3) in range [0, 255]
+            save_path: Optional path to save screenshot
+            car_model_path: Optional path to car model mesh
+            view_json_path: Optional path to camera view parameters
+
+        Returns:
+            True if visualization should continue, False to stop
+
+        Example:
+            # Basic point cloud visualization
+            success = visualizer.visualize_point_cloud(
+                points=point_coords,
+                labels=semantic_labels,
+                save_path="point_cloud.png"
+            )
+
+            # Point cloud with custom colors
+            success = visualizer.visualize_point_cloud(
+                points=point_coords,
+                colors=custom_colors,
+                save_path="colored_point_cloud.png"
+            )
+        """
+        # Validate inputs
+        self.validator.validate_point_cloud_data(points, labels, colors)
+
+        if points.shape[0] == 0:
+            logger.warning("No points to visualize")
+            return True
+
+        # Determine colors for points
+        if colors is not None:
+            # Use provided colors
+            point_colors = colors.astype(np.uint8)
+            logger.info(f"Using provided colors for {points.shape[0]} points")
+        elif labels is not None:
+            # Generate colors from labels using color map
+            if self.color_map is not None:
+                unique_labels = np.unique(labels)
+                max_label = int(np.max(unique_labels))
+
+                if max_label >= self.color_map.shape[0]:
+                    logger.warning(f"Max label {max_label} exceeds color map size {self.color_map.shape[0]}")
+                    point_colors = self._generate_default_colors(labels)
+                else:
+                    point_colors = self.color_map[labels]
+                    logger.info(f"Applied color map to {points.shape[0]} points with {len(unique_labels)} unique labels")
+            else:
+                # Generate default colors from labels
+                point_colors = self._generate_default_colors(labels)
+                logger.info(f"Generated default colors for {points.shape[0]} points")
+        else:
+            # Use default single color (white) for all points
+            point_colors = np.full((points.shape[0], 3), 255, dtype=np.uint8)
+            logger.info(f"Using default white color for {points.shape[0]} points")
+
+        # Load car model if specified
+        car_mesh = None
+        if car_model_path:
+            car_mesh = self.mesh_loader.load_mesh(car_model_path)
+
+        # Generate ego car points if needed (only if no car mesh and ego car is enabled)
+        ego_points = None
+        if self.config.show_ego_car and car_mesh is None:
+            ego_points = self.geometry_generator.generate_ego_car()
+
+        # Create geometries (use pure point cloud representation)
+        geometries = self._create_point_cloud_geometries(
+            points=points,
+            colors=point_colors,
+            ego_points=ego_points,
+            car_mesh=car_mesh
+        )
+
+        # Render scene
+        success = self._render_scene(
+            geometries=geometries,
+            save_path=save_path,
+            view_json_path=view_json_path
+        )
+
+        return success and not self.flag_exit
+
     def _get_point_colors(self,
                          labels: np.ndarray,
                          flow_vectors: Optional[np.ndarray],
@@ -1448,7 +1653,7 @@ class OccupancyVisualizer:
                                 colors: np.ndarray,
                                 ego_points: Optional[np.ndarray] = None,
                                 car_mesh: Optional[o3d.geometry.TriangleMesh] = None) -> List[o3d.geometry.Geometry]:
-        """Create all geometries for the scene."""
+        """Create all geometries for the scene (optimized for voxel-based occupancy data)."""
         geometries = []
 
         # Main point cloud
@@ -1481,6 +1686,45 @@ class OccupancyVisualizer:
         # Car model
         if car_mesh is not None:
             geometries.append(car_mesh)
+
+        return geometries
+
+    @require_open3d
+    def _create_point_cloud_geometries(self,
+                                      points: np.ndarray,
+                                      colors: np.ndarray,
+                                      ego_points: Optional[np.ndarray] = None,
+                                      car_mesh: Optional[o3d.geometry.TriangleMesh] = None) -> List[o3d.geometry.Geometry]:
+        """Create geometries for pure point cloud visualization (no voxelization)."""
+        geometries = []
+
+        # Create main point cloud - this is the primary representation
+        pcd = self.render_manager.create_point_cloud(points, colors, ego_points)
+        geometries.append(pcd)
+
+        logger.debug(f"Created point cloud with {len(pcd.points)} points")
+
+        # Add ego car points as separate point cloud if provided
+        if ego_points is not None and ego_points.shape[0] > 0:
+            ego_pcd = o3d.geometry.PointCloud()
+            ego_pcd.points = o3d.utility.Vector3dVector(ego_points)
+            # Use a distinct color for ego car (red)
+            ego_colors = np.full((ego_points.shape[0], 3), [255, 0, 0], dtype=np.uint8)
+            ego_pcd.colors = o3d.utility.Vector3dVector(ego_colors / 255.0)
+            geometries.append(ego_pcd)
+            logger.debug(f"Added ego car point cloud with {len(ego_pcd.points)} points")
+
+        # Coordinate frame for reference
+        if self.config.show_coordinate_frame:
+            frame = self.geometry_generator.create_coordinate_frame(
+                size=self.config.frame_size
+            )
+            geometries.append(frame)
+
+        # Car mesh model if provided
+        if car_mesh is not None:
+            geometries.append(car_mesh)
+            logger.debug("Added car mesh model")
 
         return geometries
 
@@ -2646,6 +2890,179 @@ class BatchProcessor:
         except Exception as e:
             logger.error(f"Failed to create comparison videos: {e}")
 
+    def process_point_cloud_sequence(self,
+                                   points_sequence: List[np.ndarray],
+                                   labels_sequence: Optional[List[np.ndarray]] = None,
+                                   colors_sequence: Optional[List[np.ndarray]] = None,
+                                   scene_name: str = "point_cloud_sequence",
+                                   create_video: bool = True,
+                                   video_fps: int = 5,
+                                   wait_time: float = 0.5,
+                                   maintain_camera: bool = True) -> List[Path]:
+        """
+        Process sequence of point cloud data.
+
+        Args:
+            points_sequence: List of point cloud arrays, each with shape (n, 3)
+            labels_sequence: Optional list of label arrays, each with shape (n,)
+            colors_sequence: Optional list of color arrays, each with shape (n, 3)
+            scene_name: Name for the sequence
+            create_video: Whether to create video from frames
+            video_fps: Video frame rate
+            wait_time: Time to wait between frames (automatic advancement)
+            maintain_camera: Whether to maintain camera position across frames
+
+        Returns:
+            List of generated image paths
+
+        Example:
+            # Process sequence of point clouds with labels
+            processor = BatchProcessor(visualizer, "point_cloud_output")
+            results = processor.process_point_cloud_sequence(
+                points_sequence=[points1, points2, points3],
+                labels_sequence=[labels1, labels2, labels3],
+                scene_name="lidar_sequence",
+                wait_time=0.5
+            )
+        """
+        if not points_sequence:
+            logger.error("Point cloud sequence cannot be empty")
+            return []
+
+        num_frames = len(points_sequence)
+        logger.info(f"Processing {num_frames} point cloud frames for scene '{scene_name}'")
+
+        # Validate sequence consistency
+        if labels_sequence is not None and len(labels_sequence) != num_frames:
+            raise ValueError(f"Labels sequence length {len(labels_sequence)} doesn't match points sequence {num_frames}")
+
+        if colors_sequence is not None and len(colors_sequence) != num_frames:
+            raise ValueError(f"Colors sequence length {len(colors_sequence)} doesn't match points sequence {num_frames}")
+
+        # Set visualizer wait_time for automatic frame advancement
+        original_wait_time = self.visualizer.config.wait_time
+        if wait_time > 0:
+            self.visualizer.config.wait_time = wait_time
+
+        saved_images = []
+        view_json_path = None
+
+        # Use camera persistence if requested
+        if maintain_camera:
+            view_json_path = str(self.output_dir / f"{scene_name}_view.json")
+
+        try:
+            for idx, points in enumerate(points_sequence):
+                # Get labels and colors for this frame
+                labels = labels_sequence[idx] if labels_sequence is not None else None
+                colors = colors_sequence[idx] if colors_sequence is not None else None
+
+                # Create save path
+                save_path = self.output_dir / f"{scene_name}_frame_{idx:04d}.png"
+
+                # Visualize frame
+                success = self.visualizer.visualize_point_cloud(
+                    points=points,
+                    labels=labels,
+                    colors=colors,
+                    save_path=str(save_path),
+                    view_json_path=view_json_path if idx == 0 else None
+                )
+
+                if success:
+                    saved_images.append(save_path)
+                    logger.debug(f"Processed frame {idx+1}/{num_frames}: {save_path}")
+                else:
+                    logger.warning(f"Failed to process frame {idx}")
+                    break
+
+        finally:
+            # Restore original settings
+            self.visualizer.config.wait_time = original_wait_time
+
+        # Create video if requested
+        if create_video and saved_images:
+            self._create_video(saved_images, scene_name, video_fps)
+
+        logger.info(f"Processed {len(saved_images)} point cloud frames for scene '{scene_name}'")
+        return saved_images
+
+    def process_point_cloud_with_metadata(self,
+                                        points_sequence: List[np.ndarray],
+                                        metadata_sequence: List[Dict],
+                                        scene_name: str = "point_cloud_metadata_sequence",
+                                        create_video: bool = True,
+                                        video_fps: int = 5,
+                                        wait_time: float = 0.5,
+                                        maintain_camera: bool = True) -> List[Path]:
+        """
+        Process sequence of point cloud data with associated metadata.
+
+        Args:
+            points_sequence: List of point cloud arrays, each with shape (n, 3)
+            metadata_sequence: List of metadata dictionaries containing 'labels' and/or 'colors'
+            scene_name: Name for the sequence
+            create_video: Whether to create video from frames
+            video_fps: Video frame rate
+            wait_time: Time to wait between frames
+            maintain_camera: Whether to maintain camera position across frames
+
+        Returns:
+            List of generated image paths
+
+        Example:
+            metadata = [
+                {'labels': labels1, 'timestamp': '123.456'},
+                {'colors': colors2, 'timestamp': '123.556'},
+                {'labels': labels3, 'colors': colors3, 'timestamp': '123.656'}
+            ]
+            results = processor.process_point_cloud_with_metadata(
+                points_sequence=[points1, points2, points3],
+                metadata_sequence=metadata,
+                scene_name="lidar_with_metadata"
+            )
+        """
+        if not points_sequence or not metadata_sequence:
+            logger.error("Point cloud sequence and metadata cannot be empty")
+            return []
+
+        if len(points_sequence) != len(metadata_sequence):
+            raise ValueError(f"Sequence lengths don't match: points={len(points_sequence)}, metadata={len(metadata_sequence)}")
+
+        # Extract labels and colors from metadata
+        labels_sequence = []
+        colors_sequence = []
+
+        for i, metadata in enumerate(metadata_sequence):
+            labels = metadata.get('labels', None)
+            colors = metadata.get('colors', None)
+
+            labels_sequence.append(labels)
+            colors_sequence.append(colors)
+
+            # Log metadata info
+            info_parts = []
+            if labels is not None:
+                info_parts.append(f"labels: {labels.shape}")
+            if colors is not None:
+                info_parts.append(f"colors: {colors.shape}")
+            if 'timestamp' in metadata:
+                info_parts.append(f"timestamp: {metadata['timestamp']}")
+
+            logger.debug(f"Frame {i}: {', '.join(info_parts) if info_parts else 'no metadata'}")
+
+        # Use the main point cloud sequence processing
+        return self.process_point_cloud_sequence(
+            points_sequence=points_sequence,
+            labels_sequence=labels_sequence,
+            colors_sequence=colors_sequence,
+            scene_name=scene_name,
+            create_video=create_video,
+            video_fps=video_fps,
+            wait_time=wait_time,
+            maintain_camera=maintain_camera
+        )
+
     def process_bev_sequence(self,
                            occupancy_4d: np.ndarray,
                            free_class: Optional[int] = None,
@@ -3493,6 +3910,116 @@ class VisualizerFactory:
         color_map = get_color_map_by_name(color_map_name)
         return OccupancyVisualizer(config=config, color_map=color_map, **kwargs)
 
+    @staticmethod
+    def create_point_cloud_visualizer(color_map_name: str = 'occ3d',
+                                     point_size: int = 4,
+                                     background_color: Tuple[int, int, int] = (0, 0, 0),
+                                     **kwargs) -> OccupancyVisualizer:
+        """
+        Create visualizer optimized for point cloud data visualization.
+
+        Args:
+            color_map_name: Name of color map to use ('occ3d', 'openocc', 'default')
+            point_size: Size of rendered points
+            background_color: Background color RGB tuple
+            **kwargs: Additional arguments passed to OccupancyVisualizer
+
+        Returns:
+            Configured OccupancyVisualizer instance
+
+        Example:
+            # Create point cloud visualizer with dark background
+            visualizer = VisualizerFactory.create_point_cloud_visualizer(
+                color_map_name='occ3d',
+                point_size=6,
+                background_color=(0, 0, 0)
+            )
+        """
+        config = VisualizationConfig(
+            point_size=point_size,
+            background_color=background_color,
+            show_ego_car=False,  # Usually not needed for point clouds
+            show_coordinate_frame=True,
+            frame_size=2.0  # Larger frame for better visibility
+        )
+        color_map = get_color_map_by_name(color_map_name)
+        return OccupancyVisualizer(config=config, color_map=color_map, **kwargs)
+
+    @staticmethod
+    def create_lidar_visualizer(point_size: int = 2,
+                               background_color: Tuple[int, int, int] = (0, 0, 0),
+                               show_ego_car: bool = True,
+                               **kwargs) -> OccupancyVisualizer:
+        """
+        Create visualizer optimized for LiDAR point cloud data.
+
+        Args:
+            point_size: Size of rendered points (smaller for dense LiDAR)
+            background_color: Background color RGB tuple
+            show_ego_car: Whether to show ego vehicle
+            **kwargs: Additional arguments passed to OccupancyVisualizer
+
+        Returns:
+            Configured OccupancyVisualizer instance
+
+        Example:
+            # Create LiDAR visualizer for automotive data
+            visualizer = VisualizerFactory.create_lidar_visualizer(
+                point_size=2,
+                show_ego_car=True
+            )
+        """
+        config = VisualizationConfig(
+            point_size=point_size,
+            background_color=background_color,
+            show_ego_car=show_ego_car,
+            show_coordinate_frame=True,
+            frame_size=3.0  # Larger frame for LiDAR scale
+        )
+        # Use OCC3D color map as it's common for automotive LiDAR
+        color_map = get_occ3d_color_map()
+        return OccupancyVisualizer(config=config, color_map=color_map, **kwargs)
+
+    @staticmethod
+    def create_point_cloud_batch_processor(output_dir: Union[str, Path],
+                                         color_map_name: str = 'occ3d',
+                                         point_size: int = 4,
+                                         background_color: Tuple[int, int, int] = (0, 0, 0),
+                                         **kwargs) -> Tuple[OccupancyVisualizer, 'BatchProcessor']:
+        """
+        Create batch processor for point cloud sequences.
+
+        Args:
+            output_dir: Output directory for processed files
+            color_map_name: Name of color map to use
+            point_size: Size of rendered points
+            background_color: Background color RGB tuple
+            **kwargs: Additional arguments passed to OccupancyVisualizer
+
+        Returns:
+            Tuple of (visualizer, batch_processor)
+
+        Example:
+            # Create batch processor for point cloud sequences
+            visualizer, processor = VisualizerFactory.create_point_cloud_batch_processor(
+                output_dir="point_cloud_results",
+                color_map_name='occ3d',
+                point_size=5
+            )
+            results = processor.process_point_cloud_sequence(
+                points_sequence=[points1, points2, points3],
+                labels_sequence=[labels1, labels2, labels3]
+            )
+        """
+        visualizer = VisualizerFactory.create_point_cloud_visualizer(
+            color_map_name=color_map_name,
+            point_size=point_size,
+            background_color=background_color,
+            **kwargs
+        )
+        processor = BatchProcessor(visualizer, output_dir)
+        return visualizer, processor
+
 
 # Utility functions for backward compatibility and convenience
 def create_default_color_map(num_classes: int) -> np.ndarray:
@@ -3670,6 +4197,129 @@ def load_occupancy_data(file_path: Union[str, Path]) -> np.ndarray:
         raise OccupancyVisualizerError(f"Unsupported file format: {file_path.suffix}")
 
 
+def load_point_cloud_data(file_path: Union[str, Path]) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Load point cloud data from various file formats.
+
+    Args:
+        file_path: Path to point cloud file
+
+    Returns:
+        Tuple of (points, labels, colors) where:
+        - points: Point coordinates with shape (n, 3)
+        - labels: Optional semantic labels with shape (n,)
+        - colors: Optional RGB colors with shape (n, 3)
+    """
+    file_path = Path(file_path)
+
+    if file_path.suffix == '.npz':
+        data = np.load(file_path)
+        points = data.get('points', data.get('coords', None))
+        labels = data.get('labels', data.get('semantic_labels', None))
+        colors = data.get('colors', data.get('rgb', None))
+
+        if points is None:
+            # Try to find points data with any key
+            for key in data.keys():
+                if 'point' in key.lower() or 'coord' in key.lower():
+                    points = data[key]
+                    break
+
+        if points is None:
+            raise OccupancyVisualizerError("Could not find point coordinates in npz file")
+
+        return points, labels, colors
+
+    elif file_path.suffix == '.npy':
+        data = np.load(file_path)
+        if data.ndim == 2 and data.shape[1] >= 3:
+            points = data[:, :3]
+            labels = data[:, 3] if data.shape[1] >= 4 else None
+            colors = data[:, 4:7] if data.shape[1] >= 7 else None
+            return points, labels, colors
+        else:
+            raise OccupancyVisualizerError(f"Invalid point cloud data shape: {data.shape}")
+
+    elif file_path.suffix in ['.txt', '.xyz']:
+        data = np.loadtxt(file_path)
+        if data.ndim == 2 and data.shape[1] >= 3:
+            points = data[:, :3]
+            labels = data[:, 3] if data.shape[1] >= 4 else None
+            colors = data[:, 4:7] if data.shape[1] >= 7 else None
+            return points, labels, colors
+        else:
+            raise OccupancyVisualizerError(f"Invalid point cloud data shape: {data.shape}")
+
+    elif file_path.suffix == '.pcd':
+        if not OPEN3D_AVAILABLE:
+            raise DependencyError("Open3D is required to load PCD files")
+        pcd = o3d.io.read_point_cloud(str(file_path))
+        points = np.asarray(pcd.points)
+        colors = np.asarray(pcd.colors) * 255 if pcd.has_colors() else None
+        labels = None  # PCD format doesn't typically store semantic labels
+        return points, labels, colors
+
+    elif file_path.suffix == '.ply':
+        if not OPEN3D_AVAILABLE:
+            raise DependencyError("Open3D is required to load PLY files")
+        pcd = o3d.io.read_point_cloud(str(file_path))
+        points = np.asarray(pcd.points)
+        colors = np.asarray(pcd.colors) * 255 if pcd.has_colors() else None
+        labels = None  # Basic PLY format doesn't store semantic labels
+        return points, labels, colors
+
+    else:
+        raise OccupancyVisualizerError(f"Unsupported file format: {file_path.suffix}")
+
+
+def save_point_cloud_data(points: np.ndarray,
+                         file_path: Union[str, Path],
+                         labels: Optional[np.ndarray] = None,
+                         colors: Optional[np.ndarray] = None) -> None:
+    """
+    Save point cloud data to file.
+
+    Args:
+        points: Point coordinates with shape (n, 3)
+        file_path: Output file path
+        labels: Optional semantic labels with shape (n,)
+        colors: Optional RGB colors with shape (n, 3)
+    """
+    file_path = Path(file_path)
+
+    if file_path.suffix == '.npz':
+        save_data = {'points': points}
+        if labels is not None:
+            save_data['labels'] = labels
+        if colors is not None:
+            save_data['colors'] = colors
+        np.savez_compressed(file_path, **save_data)
+
+    elif file_path.suffix == '.npy':
+        # Combine all data into single array
+        data_list = [points]
+        if labels is not None:
+            data_list.append(labels.reshape(-1, 1))
+        if colors is not None:
+            data_list.append(colors)
+        combined_data = np.concatenate(data_list, axis=1)
+        np.save(file_path, combined_data)
+
+    elif file_path.suffix in ['.pcd', '.ply']:
+        if not OPEN3D_AVAILABLE:
+            raise DependencyError("Open3D is required to save PCD/PLY files")
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        if colors is not None:
+            if colors.max() > 1.0:
+                colors = colors / 255.0
+            pcd.colors = o3d.utility.Vector3dVector(colors)
+        o3d.io.write_point_cloud(str(file_path), pcd)
+
+    else:
+        raise OccupancyVisualizerError(f"Unsupported file format: {file_path.suffix}")
+
+
 # Example usage and demo functions
 def demo_basic_visualization():
     """Demonstrate basic occupancy visualization with OCC3D colors."""
@@ -3793,6 +4443,176 @@ def demo_class_legend():
         print(f"{i:2d}: {class_name:20s} RGB{tuple(rgb_color)}")
 
 
+def demo_point_cloud_visualization():
+    """Demonstrate basic point cloud visualization."""
+    # Create sample LiDAR-like point cloud data
+    np.random.seed(42)
+    n_points = 10000
+
+    # Generate points in a realistic LiDAR pattern (cylindrical coordinates)
+    theta = np.random.uniform(0, 2*np.pi, n_points)
+    phi = np.random.uniform(-np.pi/6, np.pi/6, n_points)  # Elevation angle
+    r = np.random.uniform(5, 50, n_points)  # Distance
+
+    # Convert to Cartesian coordinates
+    x = r * np.cos(phi) * np.cos(theta)
+    y = r * np.cos(phi) * np.sin(theta)
+    z = r * np.sin(phi) + np.random.normal(0, 0.5, n_points)  # Add ground plane variation
+
+    points = np.column_stack([x, y, z])
+
+    # Create semantic labels (simulate different object classes)
+    labels = np.zeros(n_points, dtype=int)
+
+    # Ground points (low z values)
+    ground_mask = z < -1.5
+    labels[ground_mask] = 14  # terrain
+
+    # Building/structure points (high and clustered)
+    building_mask = (z > 2) & (r < 30)
+    labels[building_mask] = 15  # manmade
+
+    # Vehicle points (specific height and distance ranges)
+    vehicle_mask = (-1 < z) & (z < 3) & (10 < r) & (r < 25)
+    labels[vehicle_mask] = 4  # car
+
+    # Vegetation points
+    vegetation_mask = (z > 1) & (r > 25) & ~building_mask
+    labels[vegetation_mask] = 16  # vegetation
+
+    # Create visualizer for point clouds
+    visualizer = VisualizerFactory.create_point_cloud_visualizer(
+        color_map_name='occ3d',
+        point_size=3,
+        background_color=(0, 0, 0)
+    )
+
+    try:
+        success = visualizer.visualize_point_cloud(
+            points=points,
+            labels=labels,
+            save_path="point_cloud_demo.png"
+        )
+        print(f"Point cloud visualization {'succeeded' if success else 'failed'}")
+        print(f"Visualized {points.shape[0]} points with {len(np.unique(labels))} unique classes")
+    finally:
+        visualizer.cleanup()
+
+
+def demo_lidar_visualization():
+    """Demonstrate LiDAR point cloud visualization with ego vehicle."""
+    # Create realistic automotive LiDAR point cloud
+    np.random.seed(123)
+    n_points = 20000
+
+    # Multi-layer LiDAR simulation (32 beams)
+    n_beams = 32
+    points_per_beam = n_points // n_beams
+
+    all_points = []
+    all_labels = []
+
+    for beam_idx in range(n_beams):
+        # Elevation angle for this beam
+        elevation = np.linspace(-15, 15, n_beams)[beam_idx] * np.pi / 180
+
+        # Azimuth angles for this beam
+        azimuth = np.linspace(0, 2*np.pi, points_per_beam, endpoint=False)
+
+        # Distance varies by beam (simulate occlusion and range)
+        distances = np.random.uniform(2, 50, points_per_beam)
+
+        # Convert to Cartesian
+        x = distances * np.cos(elevation) * np.cos(azimuth)
+        y = distances * np.cos(elevation) * np.sin(azimuth)
+        z = distances * np.sin(elevation)
+
+        beam_points = np.column_stack([x, y, z])
+        all_points.append(beam_points)
+
+        # Generate labels based on geometry
+        beam_labels = np.full(points_per_beam, 17, dtype=int)  # Start with free space
+
+        # Road surface
+        road_mask = (-2 < z) & (z < -0.5) & (distances < 50)
+        beam_labels[road_mask] = 11  # driveable_surface
+
+        # Vehicles (rectangular regions at typical heights)
+        vehicle_mask = (-0.5 < z) & (z < 2.5) & (5 < distances) & (distances < 30)
+        beam_labels[vehicle_mask] = 4  # car
+
+        # Buildings (high points at medium to far distances)
+        building_mask = (z > 3) & (20 < distances) & (distances < 60)
+        beam_labels[building_mask] = 15  # manmade
+
+        all_labels.append(beam_labels)
+
+    points = np.vstack(all_points)
+    labels = np.concatenate(all_labels)
+
+    # Create LiDAR-optimized visualizer
+    visualizer = VisualizerFactory.create_lidar_visualizer(
+        point_size=2,
+        show_ego_car=True
+    )
+
+    try:
+        success = visualizer.visualize_point_cloud(
+            points=points,
+            labels=labels,
+            save_path="lidar_demo.png"
+        )
+        print(f"LiDAR visualization {'succeeded' if success else 'failed'}")
+        print(f"Visualized {points.shape[0]} LiDAR points from {n_beams} beams")
+    finally:
+        visualizer.cleanup()
+
+
+def demo_custom_colors_point_cloud():
+    """Demonstrate point cloud visualization with custom colors."""
+    # Generate point cloud data
+    np.random.seed(789)
+    n_points = 8000
+
+    # Create a spherical point cloud
+    phi = np.random.uniform(0, 2*np.pi, n_points)
+    theta = np.random.uniform(0, np.pi, n_points)
+    r = np.random.uniform(0.5, 10, n_points)
+
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+
+    points = np.column_stack([x, y, z])
+
+    # Create custom colors based on distance from origin
+    distances = np.linalg.norm(points, axis=1)
+    colors = np.zeros((n_points, 3), dtype=np.uint8)
+
+    # Color gradient: blue (close) to red (far)
+    normalized_dist = (distances - distances.min()) / (distances.max() - distances.min())
+    colors[:, 0] = (normalized_dist * 255).astype(np.uint8)  # Red component
+    colors[:, 2] = ((1 - normalized_dist) * 255).astype(np.uint8)  # Blue component
+    colors[:, 1] = (np.sin(normalized_dist * np.pi) * 128).astype(np.uint8)  # Green component
+
+    # Create visualizer
+    visualizer = VisualizerFactory.create_point_cloud_visualizer(
+        point_size=5,
+        background_color=(20, 20, 20)
+    )
+
+    try:
+        success = visualizer.visualize_point_cloud(
+            points=points,
+            colors=colors,
+            save_path="custom_colors_point_cloud.png"
+        )
+        print(f"Custom colors point cloud visualization {'succeeded' if success else 'failed'}")
+        print(f"Used custom gradient colors for {points.shape[0]} points")
+    finally:
+        visualizer.cleanup()
+
+
 if __name__ == "__main__":
     # Print class information
     demo_class_legend()
@@ -3812,3 +4632,12 @@ if __name__ == "__main__":
 
     print("Running batch processing demo...")
     demo_batch_processing()
+
+    print("Running point cloud visualization demo...")
+    demo_point_cloud_visualization()
+
+    print("Running LiDAR visualization demo...")
+    demo_lidar_visualization()
+
+    print("Running custom colors point cloud demo...")
+    demo_custom_colors_point_cloud()

@@ -77,6 +77,9 @@ class VisualizationConfig:
     frame_size: float = 1.0
     wait_time: float = -1
     auto_save: bool = False
+    use_distance_coloring: bool = False
+    distance_color_scheme: str = "rainbow"
+    distance_range: Optional[Tuple[float, float]] = None
 
     def __post_init__(self):
         if self.ignore_labels is None:
@@ -566,6 +569,165 @@ class ColorProcessor(BaseComponent):
 
         return legend_image
 
+    @staticmethod
+    def distance_to_color(points: np.ndarray,
+                         color_scheme: str = "rainbow",
+                         distance_range: Optional[Tuple[float, float]] = None,
+                         origin: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Convert point distances to colors using various color schemes.
+
+        Args:
+            points: Point coordinates with shape (n, 3)
+            color_scheme: Color scheme to use ('rainbow', 'viridis', 'plasma', 'cool_warm', 'distance_fade')
+            distance_range: Optional (min_dist, max_dist) for color mapping. If None, uses data range
+            origin: Origin point for distance calculation. If None, uses (0, 0, 0)
+
+        Returns:
+            Colors as numpy array with shape (n, 3) in range [0, 255]
+        """
+        if origin is None:
+            origin = np.array([0.0, 0.0, 0.0])
+
+        # Calculate distances from origin
+        distances = np.linalg.norm(points - origin, axis=1)
+
+        # Determine distance range for normalization
+        if distance_range is None:
+            min_dist, max_dist = distances.min(), distances.max()
+        else:
+            min_dist, max_dist = distance_range
+
+        # Avoid division by zero
+        if max_dist == min_dist:
+            max_dist = min_dist + 1e-6
+
+        # Normalize distances to [0, 1]
+        normalized_distances = np.clip((distances - min_dist) / (max_dist - min_dist), 0, 1)
+
+        # Apply color scheme
+        if color_scheme == "rainbow":
+            colors = ColorProcessor._rainbow_colormap(normalized_distances)
+        elif color_scheme == "viridis":
+            colors = ColorProcessor._viridis_colormap(normalized_distances)
+        elif color_scheme == "plasma":
+            colors = ColorProcessor._plasma_colormap(normalized_distances)
+        elif color_scheme == "cool_warm":
+            colors = ColorProcessor._cool_warm_colormap(normalized_distances)
+        elif color_scheme == "distance_fade":
+            colors = ColorProcessor._distance_fade_colormap(normalized_distances)
+        else:
+            # Default to rainbow
+            colors = ColorProcessor._rainbow_colormap(normalized_distances)
+
+        return colors
+
+    @staticmethod
+    def _rainbow_colormap(values: np.ndarray) -> np.ndarray:
+        """Rainbow colormap: blue -> green -> yellow -> red."""
+        colors = np.zeros((len(values), 3), dtype=np.uint8)
+
+        # Convert to HSV-like rainbow
+        hue = values * 240  # 0 to 240 degrees (blue to red)
+
+        for i, h in enumerate(hue):
+            if h <= 60:  # Blue to Cyan
+                colors[i] = [0, int(h * 255 / 60), 255]
+            elif h <= 120:  # Cyan to Green
+                colors[i] = [0, 255, int((120 - h) * 255 / 60)]
+            elif h <= 180:  # Green to Yellow
+                colors[i] = [int((h - 120) * 255 / 60), 255, 0]
+            elif h <= 240:  # Yellow to Red
+                colors[i] = [255, int((240 - h) * 255 / 60), 0]
+            else:  # Red
+                colors[i] = [255, 0, 0]
+
+        return colors
+
+    @staticmethod
+    def _viridis_colormap(values: np.ndarray) -> np.ndarray:
+        """Viridis-inspired colormap: dark purple -> blue -> green -> yellow."""
+        colors = np.zeros((len(values), 3), dtype=np.uint8)
+
+        # Viridis-like color progression
+        for i, v in enumerate(values):
+            if v <= 0.25:
+                # Dark purple to blue
+                t = v / 0.25
+                colors[i] = [int(68 + t * (59 - 68)), int(1 + t * (82 - 1)), int(84 + t * (139 - 84))]
+            elif v <= 0.5:
+                # Blue to teal
+                t = (v - 0.25) / 0.25
+                colors[i] = [int(59 + t * (33 - 59)), int(82 + t * (144 - 82)), int(139 + t * (140 - 139))]
+            elif v <= 0.75:
+                # Teal to green
+                t = (v - 0.5) / 0.25
+                colors[i] = [int(33 + t * (94 - 33)), int(144 + t * (201 - 144)), int(140 + t * (98 - 140))]
+            else:
+                # Green to yellow
+                t = (v - 0.75) / 0.25
+                colors[i] = [int(94 + t * (253 - 94)), int(201 + t * (231 - 201)), int(98 + t * (37 - 98))]
+
+        return colors
+
+    @staticmethod
+    def _plasma_colormap(values: np.ndarray) -> np.ndarray:
+        """Plasma-inspired colormap: dark purple -> magenta -> orange -> yellow."""
+        colors = np.zeros((len(values), 3), dtype=np.uint8)
+
+        for i, v in enumerate(values):
+            if v <= 0.25:
+                # Dark purple to magenta
+                t = v / 0.25
+                colors[i] = [int(13 + t * (126 - 13)), int(8 + t * (3 - 8)), int(135 + t * (167 - 135))]
+            elif v <= 0.5:
+                # Magenta to red-orange
+                t = (v - 0.25) / 0.25
+                colors[i] = [int(126 + t * (203 - 126)), int(3 + t * (70 - 3)), int(167 + t * (99 - 167))]
+            elif v <= 0.75:
+                # Red-orange to orange
+                t = (v - 0.5) / 0.25
+                colors[i] = [int(203 + t * (248 - 203)), int(70 + t * (149 - 70)), int(99 + t * (33 - 99))]
+            else:
+                # Orange to yellow
+                t = (v - 0.75) / 0.25
+                colors[i] = [int(248 + t * (240 - 248)), int(149 + t * (249 - 149)), int(33 + t * (33 - 33))]
+
+        return colors
+
+    @staticmethod
+    def _cool_warm_colormap(values: np.ndarray) -> np.ndarray:
+        """Cool-warm colormap: blue -> white -> red."""
+        colors = np.zeros((len(values), 3), dtype=np.uint8)
+
+        for i, v in enumerate(values):
+            if v <= 0.5:
+                # Blue to white
+                t = v / 0.5
+                colors[i] = [int(59 + t * (255 - 59)), int(76 + t * (255 - 76)), int(192 + t * (255 - 192))]
+            else:
+                # White to red
+                t = (v - 0.5) / 0.5
+                colors[i] = [int(255), int(255 - t * (255 - 76)), int(255 - t * (255 - 76))]
+
+        return colors
+
+    @staticmethod
+    def _distance_fade_colormap(values: np.ndarray) -> np.ndarray:
+        """Distance fade colormap: bright white/yellow (close) -> dark blue (far)."""
+        colors = np.zeros((len(values), 3), dtype=np.uint8)
+
+        # Close points are bright yellow/white, far points are dark blue
+        for i, v in enumerate(values):
+            intensity = 1.0 - v  # Invert so close = bright
+            colors[i] = [
+                int(intensity * 255 + (1 - intensity) * 30),    # Red: bright -> dark blue
+                int(intensity * 255 + (1 - intensity) * 30),    # Green: bright -> dark blue
+                int(intensity * 100 + (1 - intensity) * 100)    # Blue: yellow -> blue
+            ]
+
+        return colors
+
 
 class VoxelProcessor(BaseComponent):
     """
@@ -1048,8 +1210,11 @@ class EventHandler:
             32: self._on_space,        # SPACE
             262: self._on_right_arrow, # RIGHT
             263: self._on_left_arrow,  # LEFT
-            83: self._on_s_key,        # S (save)
+            83: self._on_s_key,        # S (save screenshot)
             82: self._on_r_key,        # R (reset view)
+            67: self._on_c_key,        # C (save camera parameters)
+            76: self._on_l_key,        # L (load camera parameters)
+            86: self._on_v_key,        # V (toggle camera persistence)
         }
         return self.key_bindings
 
@@ -1093,6 +1258,65 @@ class EventHandler:
             logger.info("View reset to default")
         except Exception as e:
             logger.error(f"Failed to reset view: {e}")
+        return True
+
+    def _on_c_key(self, vis) -> bool:
+        """Handle C key press (save camera parameters)."""
+        try:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            save_path = f"camera_params_{timestamp}.json"
+            self.visualizer.camera_controller.save_camera_parameters(
+                vis.get_view_control(), save_path
+            )
+            logger.info(f"Camera parameters saved to {save_path}")
+        except Exception as e:
+            logger.error(f"Failed to save camera parameters: {e}")
+        return True
+
+    def _on_l_key(self, vis) -> bool:
+        """Handle L key press (load most recent camera parameters)."""
+        try:
+            # Try to load from default view.json first
+            view_files = ["view.json"]
+
+            # Also look for timestamped camera parameter files
+            import glob
+            from pathlib import Path
+            timestamped_files = sorted(glob.glob("camera_params_*.json"), reverse=True)
+            view_files.extend(timestamped_files)
+
+            loaded = False
+            for view_file in view_files:
+                if Path(view_file).exists():
+                    try:
+                        camera_params = self.visualizer.camera_controller.load_camera_parameters(view_file)
+                        self.visualizer.camera_controller.apply_parameters(vis.get_view_control())
+                        logger.info(f"Camera parameters loaded from {view_file}")
+                        loaded = True
+                        break
+                    except Exception as e:
+                        logger.debug(f"Could not load camera parameters from {view_file}: {e}")
+                        continue
+
+            if not loaded:
+                logger.warning("No valid camera parameter files found")
+        except Exception as e:
+            logger.error(f"Failed to load camera parameters: {e}")
+        return True
+
+    def _on_v_key(self, vis) -> bool:
+        """Handle V key press (toggle camera parameter persistence)."""
+        try:
+            if hasattr(self.visualizer, 'flag_camera_persistence'):
+                self.visualizer.flag_camera_persistence = not self.visualizer.flag_camera_persistence
+                status = "enabled" if self.visualizer.flag_camera_persistence else "disabled"
+                logger.info(f"Camera parameter persistence {status}")
+            else:
+                # Initialize the flag if it doesn't exist
+                self.visualizer.flag_camera_persistence = True
+                logger.info("Camera parameter persistence enabled")
+        except Exception as e:
+            logger.error(f"Failed to toggle camera persistence: {e}")
         return True
 
 
@@ -1357,6 +1581,7 @@ class OccupancyVisualizer:
         self.flag_next = False
         self.flag_exit = False
         self.flag_save_on_exit = False
+        self.flag_camera_persistence = True
 
     def load_external_camera_parameters(self, view_json_path: Union[str, Path]) -> None:
         """
@@ -1393,6 +1618,72 @@ class OccupancyVisualizer:
     def get_camera_info(self) -> Optional[Dict]:
         """Get information about currently loaded camera parameters."""
         return self.camera_controller.get_parameters_info()
+
+    def set_camera_persistence(self, enabled: bool) -> None:
+        """
+        Enable or disable automatic camera parameter persistence during sequences.
+
+        When enabled, camera parameters are automatically saved after the first frame
+        and applied to subsequent frames in sequence visualizations.
+
+        Args:
+            enabled: Whether to enable camera persistence
+        """
+        self.flag_camera_persistence = enabled
+        logger.info(f"Camera parameter persistence {'enabled' if enabled else 'disabled'}")
+
+    def apply_external_camera_to_current_view(self, view_json_path: Union[str, Path]) -> bool:
+        """
+        Apply external camera parameters to the current active visualization.
+
+        This method is useful for applying saved camera parameters to an already
+        running visualization session.
+
+        Args:
+            view_json_path: Path to the camera parameters file
+
+        Returns:
+            True if parameters were successfully applied, False otherwise
+        """
+        if self.view_control is None:
+            logger.warning("No active visualization to apply camera parameters to")
+            return False
+
+        try:
+            camera_params = self.camera_controller.load_camera_parameters(view_json_path)
+            self.camera_controller._current_parameters = camera_params
+            self.camera_controller.apply_parameters(self.view_control)
+            logger.info(f"External camera parameters applied from {view_json_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to apply external camera parameters: {e}")
+            return False
+
+    def save_current_camera_view(self, save_path: Optional[Union[str, Path]] = None) -> bool:
+        """
+        Save the current camera view parameters.
+
+        Args:
+            save_path: Optional path to save camera parameters. If None, uses timestamped filename.
+
+        Returns:
+            True if parameters were successfully saved, False otherwise
+        """
+        if self.view_control is None:
+            logger.warning("No active visualization to save camera parameters from")
+            return False
+
+        try:
+            if save_path is None:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                save_path = f"camera_params_{timestamp}.json"
+
+            self.camera_controller.save_camera_parameters(self.view_control, save_path)
+            logger.info(f"Camera parameters saved to {save_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save camera parameters: {e}")
+            return False
 
     @require_open3d
     def _initialize_visualizer(self) -> o3d.visualization.VisualizerWithKeyCallback:
@@ -1559,6 +1850,14 @@ class OccupancyVisualizer:
                 # Generate default colors from labels
                 point_colors = self._generate_default_colors(labels)
                 logger.info(f"Generated default colors for {points.shape[0]} points")
+        elif self.config.use_distance_coloring:
+            # Use distance-based coloring when no colors or labels provided
+            point_colors = self.color_processor.distance_to_color(
+                points=points,
+                color_scheme=self.config.distance_color_scheme,
+                distance_range=self.config.distance_range
+            )
+            logger.info(f"Applied {self.config.distance_color_scheme} distance coloring to {points.shape[0]} points")
         else:
             # Use default single color (white) for all points
             point_colors = np.full((points.shape[0], 3), 255, dtype=np.uint8)
@@ -1707,12 +2006,21 @@ class OccupancyVisualizer:
         # Add ego car points as separate point cloud if provided
         if ego_points is not None and ego_points.shape[0] > 0:
             ego_pcd = o3d.geometry.PointCloud()
-            ego_pcd.points = o3d.utility.Vector3dVector(ego_points)
-            # Use a distinct color for ego car (red)
-            ego_colors = np.full((ego_points.shape[0], 3), [255, 0, 0], dtype=np.uint8)
-            ego_pcd.colors = o3d.utility.Vector3dVector(ego_colors / 255.0)
-            geometries.append(ego_pcd)
-            logger.debug(f"Added ego car point cloud with {len(ego_pcd.points)} points")
+
+            # Extract XYZ coordinates (first 3 columns)
+            if ego_points.shape[1] >= 3:
+                ego_xyz = ego_points[:, :3]
+                ego_pcd.points = o3d.utility.Vector3dVector(ego_xyz)
+
+                # Use colors from ego_points if available (columns 3-5), otherwise default red
+                if ego_points.shape[1] >= 6:
+                    ego_colors = ego_points[:, 3:6] / 255.0  # Normalize RGB to [0,1]
+                else:
+                    ego_colors = np.full((ego_points.shape[0], 3), [1.0, 0.0, 0.0])  # Red
+
+                ego_pcd.colors = o3d.utility.Vector3dVector(ego_colors)
+                geometries.append(ego_pcd)
+                logger.debug(f"Added ego car point cloud with {len(ego_pcd.points)} points")
 
         # Coordinate frame for reference
         if self.config.show_coordinate_frame:
@@ -1746,13 +2054,40 @@ class OccupancyVisualizer:
                 self.o3d_vis.add_geometry(geom)
             self.current_geometries = geometries
 
-            # Load camera parameters
-            if view_json_path:
+            # Apply camera parameters with priority order:
+            # 1. External camera parameters (if set)
+            # 2. view_json_path parameter
+            # 3. view.json file (if exists)
+            camera_applied = False
+
+            # First try external camera parameters if they exist
+            if self.camera_controller.has_parameters():
+                try:
+                    self.camera_controller.apply_parameters(self.view_control)
+                    camera_applied = True
+                    logger.debug("Applied external camera parameters")
+                except Exception as e:
+                    logger.debug(f"Could not apply external camera parameters: {e}")
+
+            # If no external parameters, try view_json_path
+            if not camera_applied and view_json_path:
                 try:
                     camera_params = self.camera_controller.load_camera_parameters(view_json_path)
                     self.camera_controller.apply_parameters(self.view_control)
+                    camera_applied = True
+                    logger.debug(f"Applied camera parameters from {view_json_path}")
                 except OccupancyVisualizerError as e:
-                    logger.warning(f"Could not load camera parameters: {e}")
+                    logger.debug(f"Could not load camera parameters from {view_json_path}: {e}")
+
+            # Finally try default view.json if nothing else worked
+            if not camera_applied and Path("view.json").exists():
+                try:
+                    camera_params = self.camera_controller.load_camera_parameters("view.json")
+                    self.camera_controller.apply_parameters(self.view_control)
+                    camera_applied = True
+                    logger.debug("Applied camera parameters from view.json")
+                except Exception as e:
+                    logger.debug(f"Could not load camera parameters from view.json: {e}")
 
             # Run visualization loop
             success = self._run_visualization_loop()
@@ -1761,14 +2096,15 @@ class OccupancyVisualizer:
             if save_path and success and not self.flag_exit:
                 self._save_screenshot(save_path)
 
-            # Save camera parameters
-            if not self.flag_exit:
+            # Save camera parameters if persistence is enabled
+            if not self.flag_exit and getattr(self, 'flag_camera_persistence', True):
                 try:
                     self.camera_controller.save_camera_parameters(
                         self.view_control, 'view.json'
                     )
+                    logger.debug("Camera parameters saved to view.json")
                 except Exception as e:
-                    logger.warning(f"Could not save camera parameters: {e}")
+                    logger.debug(f"Could not save camera parameters: {e}")
 
             return success
 
@@ -2137,7 +2473,8 @@ class BatchProcessor:
                            create_video: bool = True,
                            video_fps: int = 5,
                            wait_time: float = 0.5,
-                           maintain_camera: bool = True) -> List[Path]:
+                           maintain_camera: bool = True,
+                           external_camera_params: Optional[Union[str, Path]] = None) -> List[Path]:
         """
         Process 4D occupancy sequence (time series).
 
@@ -2149,6 +2486,7 @@ class BatchProcessor:
             video_fps: Video frame rate
             wait_time: Time to wait between frames (automatic advancement)
             maintain_camera: Whether to maintain camera position across frames
+            external_camera_params: Optional path to external camera parameters to use for all frames
 
         Returns:
             List of generated image paths
@@ -2165,11 +2503,19 @@ class BatchProcessor:
             self.visualizer.config.wait_time = wait_time
             logger.info(f"Automatic frame advancement enabled: {wait_time}s per frame")
 
+        # Load external camera parameters if provided
+        if external_camera_params:
+            try:
+                self.visualizer.load_external_camera_parameters(external_camera_params)
+                logger.info(f"Loaded external camera parameters from {external_camera_params}")
+            except Exception as e:
+                logger.warning(f"Could not load external camera parameters: {e}")
+
         saved_images = []
         view_json_path = None
 
-        # Use camera persistence if requested
-        if maintain_camera:
+        # Use camera persistence if requested (and no external params provided)
+        if maintain_camera and not external_camera_params:
             view_json_path = 'view.json'
 
         try:
@@ -2188,12 +2534,17 @@ class BatchProcessor:
                 save_path = self.output_dir / f"{scene_name}_frame_{frame_idx:04d}.png"
                 saved_images.append(save_path)
 
+                # For external camera params, don't pass view_json_path (use loaded params instead)
+                frame_view_json = None
+                if not external_camera_params:
+                    frame_view_json = view_json_path
+
                 # Visualize frame with camera persistence
                 success = self.visualizer.visualize_occupancy(
                     occupancy_data=current_frame,
                     flow_data=current_flow,
                     save_path=save_path,
-                    view_json_path=view_json_path  # This maintains camera position
+                    view_json_path=frame_view_json  # This maintains camera position
                 )
 
                 if not success:
@@ -2203,6 +2554,10 @@ class BatchProcessor:
         finally:
             # Restore original wait_time
             self.visualizer.config.wait_time = original_wait_time
+
+            # Clear external camera parameters if they were loaded
+            if external_camera_params:
+                self.visualizer.clear_camera_parameters()
 
         # Create video if requested
         if create_video and saved_images:
@@ -2898,19 +3253,21 @@ class BatchProcessor:
                                    create_video: bool = True,
                                    video_fps: int = 5,
                                    wait_time: float = 0.5,
-                                   maintain_camera: bool = True) -> List[Path]:
+                                   maintain_camera: bool = True,
+                                   external_camera_params: Optional[Union[str, Path]] = None) -> List[Path]:
         """
         Process sequence of point cloud data.
 
         Args:
-            points_sequence: List of point cloud arrays, each with shape (n, 3)
-            labels_sequence: Optional list of label arrays, each with shape (n,)
-            colors_sequence: Optional list of color arrays, each with shape (n, 3)
+            points_sequence: point cloud arrays, each with shape (T, n, 3)
+            labels_sequence: Optional list of label arrays, each with shape (T, n)
+            colors_sequence: Optional list of color arrays, each with shape (T, n, 3)
             scene_name: Name for the sequence
             create_video: Whether to create video from frames
             video_fps: Video frame rate
             wait_time: Time to wait between frames (automatic advancement)
             maintain_camera: Whether to maintain camera position across frames
+            external_camera_params: Optional path to external camera parameters to use for all frames
 
         Returns:
             List of generated image paths
@@ -2919,15 +3276,13 @@ class BatchProcessor:
             # Process sequence of point clouds with labels
             processor = BatchProcessor(visualizer, "point_cloud_output")
             results = processor.process_point_cloud_sequence(
-                points_sequence=[points1, points2, points3],
-                labels_sequence=[labels1, labels2, labels3],
+                points_sequence=points_sequence,
+                labels_sequence=labels_sequence,
                 scene_name="lidar_sequence",
-                wait_time=0.5
+                wait_time=0.5,
+                external_camera_params="my_camera_view.json"
             )
         """
-        if not points_sequence:
-            logger.error("Point cloud sequence cannot be empty")
-            return []
 
         num_frames = len(points_sequence)
         logger.info(f"Processing {num_frames} point cloud frames for scene '{scene_name}'")
@@ -2944,11 +3299,19 @@ class BatchProcessor:
         if wait_time > 0:
             self.visualizer.config.wait_time = wait_time
 
+        # Load external camera parameters if provided
+        if external_camera_params:
+            try:
+                self.visualizer.load_external_camera_parameters(external_camera_params)
+                logger.info(f"Loaded external camera parameters from {external_camera_params}")
+            except Exception as e:
+                logger.warning(f"Could not load external camera parameters: {e}")
+
         saved_images = []
         view_json_path = None
 
-        # Use camera persistence if requested
-        if maintain_camera:
+        # Use camera persistence if requested (and no external params provided)
+        if maintain_camera and not external_camera_params:
             view_json_path = str(self.output_dir / f"{scene_name}_view.json")
 
         try:
@@ -2960,13 +3323,18 @@ class BatchProcessor:
                 # Create save path
                 save_path = self.output_dir / f"{scene_name}_frame_{idx:04d}.png"
 
+                # For external camera params, don't pass view_json_path (use loaded params instead)
+                frame_view_json = None
+                if not external_camera_params:
+                    frame_view_json = view_json_path if idx == 0 else None
+
                 # Visualize frame
                 success = self.visualizer.visualize_point_cloud(
                     points=points,
                     labels=labels,
                     colors=colors,
                     save_path=str(save_path),
-                    view_json_path=view_json_path if idx == 0 else None
+                    view_json_path=frame_view_json
                 )
 
                 if success:
@@ -2979,6 +3347,10 @@ class BatchProcessor:
         finally:
             # Restore original settings
             self.visualizer.config.wait_time = original_wait_time
+
+            # Clear external camera parameters if they were loaded
+            if external_camera_params:
+                self.visualizer.clear_camera_parameters()
 
         # Create video if requested
         if create_video and saved_images:
@@ -3981,10 +4353,101 @@ class VisualizerFactory:
         return OccupancyVisualizer(config=config, color_map=color_map, **kwargs)
 
     @staticmethod
+    def create_distance_colored_visualizer(color_scheme: str = "rainbow",
+                                         distance_range: Optional[Tuple[float, float]] = None,
+                                         point_size: int = 3,
+                                         background_color: Tuple[int, int, int] = (0, 0, 0),
+                                         show_ego_car: bool = True,
+                                         **kwargs) -> OccupancyVisualizer:
+        """
+        Create visualizer with distance-based coloring enabled.
+
+        This visualizer automatically colors points based on their distance from origin
+        when no explicit colors are provided.
+
+        Args:
+            color_scheme: Distance color scheme ('rainbow', 'viridis', 'plasma', 'cool_warm', 'distance_fade')
+            distance_range: Optional (min_dist, max_dist) for color mapping. If None, uses data range
+            point_size: Size of rendered points
+            background_color: Background color RGB tuple
+            show_ego_car: Whether to show ego vehicle
+            **kwargs: Additional arguments passed to OccupancyVisualizer
+
+        Returns:
+            Configured OccupancyVisualizer instance with distance coloring enabled
+
+        Example:
+            # Create visualizer with rainbow distance coloring
+            visualizer = VisualizerFactory.create_distance_colored_visualizer(
+                color_scheme="rainbow",
+                distance_range=(0, 50)  # 0-50 meter range
+            )
+
+            # Points will be colored automatically by distance
+            visualizer.visualize_point_cloud(points)  # No colors needed!
+        """
+        config = VisualizationConfig(
+            point_size=point_size,
+            background_color=background_color,
+            show_ego_car=show_ego_car,
+            use_distance_coloring=True,
+            distance_color_scheme=color_scheme,
+            distance_range=distance_range
+        )
+        return OccupancyVisualizer(config=config, **kwargs)
+
+    @staticmethod
+    def create_lidar_with_distance_coloring(color_scheme: str = "viridis",
+                                          distance_range: Optional[Tuple[float, float]] = (0, 80),
+                                          point_size: int = 2,
+                                          background_color: Tuple[int, int, int] = (10, 10, 10),
+                                          **kwargs) -> OccupancyVisualizer:
+        """
+        Create LiDAR visualizer optimized for distance-based coloring.
+
+        This combines LiDAR-specific optimizations with distance coloring,
+        perfect for visualizing raw LiDAR point clouds without semantic labels.
+
+        Args:
+            color_scheme: Distance color scheme optimized for LiDAR ranges
+            distance_range: Distance range for LiDAR (default 0-80m for automotive)
+            point_size: Small point size for dense LiDAR data
+            background_color: Dark background to highlight colored points
+            **kwargs: Additional arguments passed to OccupancyVisualizer
+
+        Returns:
+            LiDAR-optimized visualizer with distance coloring
+
+        Example:
+            # Perfect for raw LiDAR visualization
+            visualizer = VisualizerFactory.create_lidar_with_distance_coloring(
+                color_scheme="viridis",
+                distance_range=(2, 60)  # Ignore very close/far points
+            )
+
+            # Visualize raw LiDAR without labels
+            visualizer.visualize_point_cloud(lidar_points)
+        """
+        config = VisualizationConfig(
+            point_size=point_size,
+            background_color=background_color,
+            show_ego_car=True,
+            show_coordinate_frame=True,
+            frame_size=2.0,
+            use_distance_coloring=True,
+            distance_color_scheme=color_scheme,
+            distance_range=distance_range
+        )
+        return OccupancyVisualizer(config=config, **kwargs)
+
+    @staticmethod
     def create_point_cloud_batch_processor(output_dir: Union[str, Path],
                                          color_map_name: str = 'occ3d',
                                          point_size: int = 4,
                                          background_color: Tuple[int, int, int] = (0, 0, 0),
+                                         use_distance_coloring: bool = False,
+                                         distance_color_scheme: str = "rainbow",
+                                         distance_range: Optional[Tuple[float, float]] = None,
                                          **kwargs) -> Tuple[OccupancyVisualizer, 'BatchProcessor']:
         """
         Create batch processor for point cloud sequences.
@@ -3994,31 +4457,107 @@ class VisualizerFactory:
             color_map_name: Name of color map to use
             point_size: Size of rendered points
             background_color: Background color RGB tuple
+            use_distance_coloring: Enable distance-based coloring when no colors provided
+            distance_color_scheme: Color scheme for distance coloring ('rainbow', 'viridis', 'plasma', 'cool_warm', 'distance_fade')
+            distance_range: Optional (min_dist, max_dist) for color mapping
             **kwargs: Additional arguments passed to OccupancyVisualizer
 
         Returns:
             Tuple of (visualizer, batch_processor)
 
         Example:
-            # Create batch processor for point cloud sequences
+            # Create batch processor for point cloud sequences with semantic labels
             visualizer, processor = VisualizerFactory.create_point_cloud_batch_processor(
                 output_dir="point_cloud_results",
                 color_map_name='occ3d',
                 point_size=5
             )
+
+            # Create batch processor with distance coloring for raw point clouds
+            visualizer, processor = VisualizerFactory.create_point_cloud_batch_processor(
+                output_dir="distance_colored_results",
+                use_distance_coloring=True,
+                distance_color_scheme="viridis",
+                distance_range=(0, 60),
+                point_size=2
+            )
+
+            # Process sequences - colors will be generated automatically from distance
             results = processor.process_point_cloud_sequence(
-                points_sequence=[points1, points2, points3],
-                labels_sequence=[labels1, labels2, labels3]
+                points_sequence=[points1, points2, points3]  # No labels/colors needed
             )
         """
-        visualizer = VisualizerFactory.create_point_cloud_visualizer(
-            color_map_name=color_map_name,
+        if use_distance_coloring:
+            # Create distance-colored visualizer
+            config = VisualizationConfig(
+                point_size=point_size,
+                background_color=background_color,
+                use_distance_coloring=True,
+                distance_color_scheme=distance_color_scheme,
+                distance_range=distance_range
+            )
+            visualizer = OccupancyVisualizer(config=config, **kwargs)
+        else:
+            # Create standard visualizer with color map
+            visualizer = VisualizerFactory.create_point_cloud_visualizer(
+                color_map_name=color_map_name,
+                point_size=point_size,
+                background_color=background_color,
+                **kwargs
+            )
+
+        processor = BatchProcessor(visualizer, output_dir)
+        return visualizer, processor
+
+    @staticmethod
+    def create_distance_colored_batch_processor(output_dir: Union[str, Path],
+                                              color_scheme: str = "viridis",
+                                              distance_range: Optional[Tuple[float, float]] = None,
+                                              point_size: int = 2,
+                                              background_color: Tuple[int, int, int] = (10, 10, 10),
+                                              **kwargs) -> Tuple[OccupancyVisualizer, 'BatchProcessor']:
+        """
+        Create batch processor optimized for distance-colored point cloud sequences.
+
+        This is a convenience method for creating batch processors specifically for
+        raw point clouds without semantic labels, using distance-based coloring.
+
+        Args:
+            output_dir: Output directory for processed files
+            color_scheme: Distance color scheme ('rainbow', 'viridis', 'plasma', 'cool_warm', 'distance_fade')
+            distance_range: Optional (min_dist, max_dist) for color mapping
+            point_size: Size of rendered points (smaller for dense LiDAR)
+            background_color: Background color RGB tuple (dark recommended)
+            **kwargs: Additional arguments passed to OccupancyVisualizer
+
+        Returns:
+            Tuple of (visualizer, batch_processor) with distance coloring enabled
+
+        Example:
+            # Create batch processor for raw LiDAR sequences
+            visualizer, processor = VisualizerFactory.create_distance_colored_batch_processor(
+                output_dir="lidar_distance_colored",
+                color_scheme="viridis",
+                distance_range=(3, 60),  # Automotive LiDAR range
+                point_size=1
+            )
+
+            # Process raw LiDAR sequence - no colors/labels needed!
+            results = processor.process_point_cloud_sequence(
+                points_sequence=raw_lidar_frames,
+                scene_name="lidar_sequence",
+                create_video=True
+            )
+        """
+        return VisualizerFactory.create_point_cloud_batch_processor(
+            output_dir=output_dir,
+            use_distance_coloring=True,
+            distance_color_scheme=color_scheme,
+            distance_range=distance_range,
             point_size=point_size,
             background_color=background_color,
             **kwargs
         )
-        processor = BatchProcessor(visualizer, output_dir)
-        return visualizer, processor
 
 
 # Utility functions for backward compatibility and convenience
@@ -4613,6 +5152,485 @@ def demo_custom_colors_point_cloud():
         visualizer.cleanup()
 
 
+def demo_distance_based_coloring():
+    """Demonstrate distance-based coloring with different color schemes."""
+    print("\n=== Distance-Based Coloring Demo ===")
+
+    # Create realistic LiDAR-like point cloud
+    np.random.seed(42)
+    n_points = 12000
+
+    # Create layered LiDAR pattern with varying densities
+    layers = []
+    for layer in range(16):  # 16-layer LiDAR
+        elevation = (layer - 8) * 2.0  # -16 to +16 degrees
+        n_layer_points = int(n_points / 16)
+
+        # Generate points in this layer
+        angles = np.random.uniform(0, 2*np.pi, n_layer_points)
+        ranges = np.random.uniform(3, 60, n_layer_points)  # 3-60m range
+
+        # Convert to cartesian with elevation
+        x = ranges * np.cos(np.radians(elevation)) * np.cos(angles)
+        y = ranges * np.cos(np.radians(elevation)) * np.sin(angles)
+        z = ranges * np.sin(np.radians(elevation)) + np.random.normal(0, 0.1, n_layer_points)
+
+        layer_points = np.column_stack([x, y, z])
+        layers.append(layer_points)
+
+    points = np.vstack(layers)
+
+    print(f"Generated {points.shape[0]} LiDAR-like points")
+
+    # Demo different color schemes
+    color_schemes = [
+        ("rainbow", "Rainbow (Blue→Green→Yellow→Red)"),
+        ("viridis", "Viridis (Purple→Blue→Green→Yellow)"),
+        ("plasma", "Plasma (Purple→Magenta→Orange→Yellow)"),
+        ("cool_warm", "Cool-Warm (Blue→White→Red)"),
+        ("distance_fade", "Distance Fade (Bright→Dark)")
+    ]
+
+    for scheme, description in color_schemes:
+        print(f"\nDemonstrating {description} coloring...")
+
+        # Create visualizer with this color scheme
+        visualizer = VisualizerFactory.create_distance_colored_visualizer(
+            color_scheme=scheme,
+            distance_range=(5, 50),  # Focus on 5-50m range
+            point_size=2,
+            background_color=(10, 10, 10)
+        )
+
+        try:
+            print(f"  - Color scheme: {scheme}")
+            print(f"  - Distance range: 5-50 meters")
+            print(f"  - Points will be colored automatically by distance")
+            print(f"  - Close points = one color, far points = another color")
+
+            # Visualize without providing colors - they'll be generated from distance
+            success = visualizer.visualize_point_cloud(
+                points=points,
+                save_path=f"distance_coloring_{scheme}.png"
+            )
+
+            if success:
+                print(f"  ✓ {scheme.title()} distance coloring successful")
+            else:
+                print(f"  ✗ {scheme.title()} distance coloring failed")
+
+        except Exception as e:
+            print(f"  ✗ {scheme.title()} demo failed: {e}")
+        finally:
+            visualizer.cleanup()
+
+    print("\nDistance coloring features:")
+    print("- Automatically applied when no colors/labels provided")
+    print("- Multiple color schemes available")
+    print("- Configurable distance ranges")
+    print("- Perfect for raw LiDAR data visualization")
+
+
+def demo_lidar_distance_coloring():
+    """Demonstrate LiDAR-optimized distance coloring."""
+    print("\n=== LiDAR Distance Coloring Demo ===")
+
+    # Create automotive LiDAR point cloud
+    np.random.seed(123)
+    n_points = 15000
+
+    # Simulate typical automotive LiDAR scan pattern
+    # 64-layer LiDAR with varying angular resolution
+    layers = []
+    for layer in range(64):
+        elevation = (layer - 32) * 0.5  # ±16 degrees, finer resolution
+        density = 1.0 - abs(elevation) / 20.0  # More points near horizon
+        n_layer_points = int(n_points * density / 64)
+
+        if n_layer_points > 0:
+            angles = np.random.uniform(0, 2*np.pi, n_layer_points)
+            # Non-uniform range distribution (more points closer)
+            ranges = np.random.exponential(15, n_layer_points) + 2
+            ranges = np.clip(ranges, 2, 80)  # 2-80m typical automotive range
+
+            x = ranges * np.cos(np.radians(elevation)) * np.cos(angles)
+            y = ranges * np.cos(np.radians(elevation)) * np.sin(angles)
+            z = ranges * np.sin(np.radians(elevation)) + np.random.normal(0, 0.05, n_layer_points)
+
+            layer_points = np.column_stack([x, y, z])
+            layers.append(layer_points)
+
+    points = np.vstack(layers)
+
+    print(f"Generated {points.shape[0]} automotive LiDAR points")
+    print("Simulating 64-layer LiDAR with 2-80m range")
+
+    # Create LiDAR-optimized distance coloring visualizer
+    visualizer = VisualizerFactory.create_lidar_with_distance_coloring(
+        color_scheme="viridis",  # Good for LiDAR
+        distance_range=(3, 60),  # Ignore very close/far
+        point_size=1,            # Small for dense data
+        background_color=(5, 5, 5)
+    )
+
+    try:
+        print("\nLiDAR visualization features:")
+        print("- Viridis color scheme (purple=close, yellow=far)")
+        print("- 3-60m distance range focus")
+        print("- Small point size for dense data")
+        print("- Dark background for better contrast")
+        print("- Ego vehicle visualization enabled")
+        print("\nVisualizing automotive LiDAR with distance coloring...")
+
+        success = visualizer.visualize_point_cloud(
+            points=points,
+            save_path="lidar_distance_coloring.png"
+        )
+
+        if success:
+            print("✓ LiDAR distance coloring successful")
+            print("✓ Points colored by distance automatically")
+        else:
+            print("✗ LiDAR distance coloring failed")
+
+    except Exception as e:
+        print(f"✗ LiDAR demo failed: {e}")
+    finally:
+        visualizer.cleanup()
+
+
+def demo_distance_coloring_comparison():
+    """Compare different distance coloring approaches."""
+    print("\n=== Distance Coloring Comparison Demo ===")
+
+    # Create sample point cloud
+    np.random.seed(789)
+    n_points = 8000
+
+    # Create concentric rings at different distances for clear comparison
+    rings = []
+    distances = [5, 15, 25, 35, 45]
+
+    for dist in distances:
+        n_ring_points = n_points // len(distances)
+        angles = np.random.uniform(0, 2*np.pi, n_ring_points)
+        radii = np.random.normal(dist, 1.0, n_ring_points)  # Add some spread
+
+        x = radii * np.cos(angles) + np.random.normal(0, 0.5, n_ring_points)
+        y = radii * np.sin(angles) + np.random.normal(0, 0.5, n_ring_points)
+        z = np.random.normal(0, 2.0, n_ring_points)  # Random height
+
+        ring_points = np.column_stack([x, y, z])
+        rings.append(ring_points)
+
+    points = np.vstack(rings)
+
+    print(f"Generated {points.shape[0]} points in concentric rings")
+    print(f"Ring distances: {distances} meters")
+
+    # Compare: Manual coloring vs Distance coloring
+    color_processor = ColorProcessor()
+
+    print("\nComparison 1: Manual distance coloring")
+    manual_colors = color_processor.distance_to_color(
+        points=points,
+        color_scheme="rainbow",
+        distance_range=(0, 50)
+    )
+
+    visualizer_manual = VisualizerFactory.create_point_cloud_visualizer(
+        point_size=4,
+        background_color=(20, 20, 20)
+    )
+
+    try:
+        success = visualizer_manual.visualize_point_cloud(
+            points=points,
+            colors=manual_colors,  # Manually computed colors
+            save_path="manual_distance_coloring.png"
+        )
+        print(f"Manual distance coloring: {'SUCCESS' if success else 'FAILED'}")
+    finally:
+        visualizer_manual.cleanup()
+
+    print("\nComparison 2: Automatic distance coloring")
+    visualizer_auto = VisualizerFactory.create_distance_colored_visualizer(
+        color_scheme="rainbow",
+        distance_range=(0, 50),
+        point_size=4,
+        background_color=(20, 20, 20)
+    )
+
+    try:
+        success = visualizer_auto.visualize_point_cloud(
+            points=points,  # No colors provided - will be generated automatically
+            save_path="auto_distance_coloring.png"
+        )
+        print(f"Automatic distance coloring: {'SUCCESS' if success else 'FAILED'}")
+    finally:
+        visualizer_auto.cleanup()
+
+    print("\nBoth approaches should produce identical results!")
+    print("Automatic distance coloring is more convenient for point clouds without colors.")
+
+
+def demo_distance_coloring_customization():
+    """Demonstrate distance coloring customization options."""
+    print("\n=== Distance Coloring Customization Demo ===")
+
+    # Create point cloud with specific distance distribution
+    np.random.seed(456)
+    n_points = 6000
+
+    # Create point cloud with interesting distance distribution
+    # Near field: 0-10m (dense)
+    near_points = np.random.uniform(-10, 10, (n_points//3, 2))
+    near_z = np.random.uniform(-2, 2, n_points//3)
+    near_cloud = np.column_stack([near_points, near_z])
+
+    # Mid field: 20-40m (medium density)
+    mid_angles = np.random.uniform(0, 2*np.pi, n_points//3)
+    mid_ranges = np.random.uniform(20, 40, n_points//3)
+    mid_x = mid_ranges * np.cos(mid_angles)
+    mid_y = mid_ranges * np.sin(mid_angles)
+    mid_z = np.random.uniform(-1, 5, n_points//3)
+    mid_cloud = np.column_stack([mid_x, mid_y, mid_z])
+
+    # Far field: 60-100m (sparse)
+    far_angles = np.random.uniform(0, 2*np.pi, n_points//3)
+    far_ranges = np.random.uniform(60, 100, n_points//3)
+    far_x = far_ranges * np.cos(far_angles)
+    far_y = far_ranges * np.sin(far_angles)
+    far_z = np.random.uniform(0, 8, n_points//3)
+    far_cloud = np.column_stack([far_x, far_y, far_z])
+
+    points = np.vstack([near_cloud, mid_cloud, far_cloud])
+
+    print(f"Generated {points.shape[0]} points with 3 distance regions")
+
+    # Test different distance range configurations
+    configurations = [
+        {
+            "name": "Full Range",
+            "distance_range": None,  # Auto-detect full range
+            "color_scheme": "rainbow",
+            "description": "Auto-detected distance range"
+        },
+        {
+            "name": "Focus Near Field",
+            "distance_range": (0, 15),
+            "color_scheme": "viridis",
+            "description": "Focus on 0-15m range (near field detail)"
+        },
+        {
+            "name": "Mid-Range Focus",
+            "distance_range": (15, 50),
+            "color_scheme": "plasma",
+            "description": "Focus on 15-50m range (mid field)"
+        },
+        {
+            "name": "Far Field",
+            "distance_range": (50, 100),
+            "color_scheme": "cool_warm",
+            "description": "Focus on 50-100m range (far field)"
+        }
+    ]
+
+    for config in configurations:
+        print(f"\nConfiguration: {config['name']}")
+        print(f"Description: {config['description']}")
+        print(f"Color scheme: {config['color_scheme']}")
+        print(f"Distance range: {config['distance_range']}")
+
+        visualizer = VisualizerFactory.create_distance_colored_visualizer(
+            color_scheme=config['color_scheme'],
+            distance_range=config['distance_range'],
+            point_size=3,
+            background_color=(0, 0, 0)
+        )
+
+        try:
+            success = visualizer.visualize_point_cloud(
+                points=points,
+                save_path=f"distance_custom_{config['name'].lower().replace(' ', '_')}.png"
+            )
+            print(f"Result: {'SUCCESS' if success else 'FAILED'}")
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            visualizer.cleanup()
+
+    print("\nCustomization features demonstrated:")
+    print("- Automatic distance range detection")
+    print("- Custom distance range focusing")
+    print("- Different color schemes for different use cases")
+    print("- Flexible configuration for various point cloud types")
+
+
+def demo_camera_parameter_flexibility():
+    """Demonstrate enhanced camera parameter flexibility for LiDAR sequence visualization."""
+    print("\n=== Camera Parameter Flexibility Demo ===")
+
+    # Create sample LiDAR sequence data
+    np.random.seed(42)
+    n_points = 5000
+    n_frames = 5
+
+    points_sequence = []
+    labels_sequence = []
+
+    for frame_idx in range(n_frames):
+        # Create realistic LiDAR data with slight motion
+        theta = np.random.uniform(0, 2*np.pi, n_points)
+        phi = np.random.uniform(-np.pi/6, np.pi/6, n_points)
+        r = np.random.uniform(5, 30, n_points)
+
+        # Add slight motion/rotation per frame
+        theta += frame_idx * 0.1
+
+        x = r * np.cos(phi) * np.cos(theta) + np.random.normal(0, 0.1, n_points)
+        y = r * np.cos(phi) * np.sin(theta) + np.random.normal(0, 0.1, n_points)
+        z = r * np.sin(phi) + np.random.normal(0, 0.1, n_points)
+
+        points = np.column_stack([x, y, z])
+
+        # Create semantic labels
+        labels = np.zeros(n_points, dtype=int)
+        ground_mask = z < -1
+        labels[ground_mask] = 14  # terrain
+        vehicle_mask = (-1 < z) & (z < 2) & (r < 20)
+        labels[vehicle_mask] = 4  # car
+        building_mask = (z > 2) & (r < 25)
+        labels[building_mask] = 15  # manmade
+
+        points_sequence.append(points)
+        labels_sequence.append(labels)
+
+    # Create visualizer and batch processor
+    visualizer = VisualizerFactory.create_lidar_visualizer(
+        point_size=3,
+        show_ego_car=True,
+        background_color=(0, 0, 0)
+    )
+
+    processor = BatchProcessor(visualizer, "camera_demo_output")
+
+    try:
+        print("Processing LiDAR sequence with enhanced camera parameter support...")
+        print("Interactive controls during visualization:")
+        print("  SPACE: Pause/Resume")
+        print("  C: Save current camera parameters")
+        print("  L: Load camera parameters")
+        print("  V: Toggle camera parameter persistence")
+        print("  S: Save screenshot")
+        print("  R: Reset view")
+        print("  ESC: Exit")
+
+        # Process sequence with maintain_camera enabled
+        results = processor.process_point_cloud_sequence(
+            points_sequence=points_sequence,
+            labels_sequence=labels_sequence,
+            scene_name="lidar_with_camera_flexibility",
+            create_video=True,
+            video_fps=2,
+            wait_time=2.0,  # 2 seconds per frame for demo
+            maintain_camera=True
+        )
+
+        print(f"Processed {len(results)} frames with camera parameter support")
+        print("You can now:")
+        print("1. Run the sequence again with external_camera_params='view.json' to use saved camera")
+        print("2. Save custom camera views during visualization using 'C' key")
+        print("3. Load different camera views during playback using 'L' key")
+
+        # Demonstrate external camera parameter usage
+        if len(results) > 0 and Path("view.json").exists():
+            print("\nDemonstrating external camera parameter usage...")
+            # Process again with external camera parameters
+            results2 = processor.process_point_cloud_sequence(
+                points_sequence=points_sequence[:3],  # Just first 3 frames
+                labels_sequence=labels_sequence[:3],
+                scene_name="lidar_with_external_camera",
+                create_video=False,
+                wait_time=1.0,
+                maintain_camera=False,  # Don't use maintain_camera when using external params
+                external_camera_params="view.json"
+            )
+            print(f"Processed {len(results2)} frames using external camera parameters")
+
+    except Exception as e:
+        print(f"Demo failed: {e}")
+    finally:
+        visualizer.cleanup()
+
+
+def demo_interactive_camera_controls():
+    """Demonstrate interactive camera controls during point cloud visualization."""
+    print("\n=== Interactive Camera Controls Demo ===")
+
+    # Create sample point cloud data
+    np.random.seed(123)
+    n_points = 10000
+
+    # Create multi-layer automotive LiDAR pattern
+    theta = np.random.uniform(0, 2*np.pi, n_points)
+    phi = np.random.uniform(-np.pi/6, np.pi/6, n_points)
+    r = np.random.uniform(3, 50, n_points)
+
+    x = r * np.cos(phi) * np.cos(theta)
+    y = r * np.cos(phi) * np.sin(theta)
+    z = r * np.sin(phi) + np.random.normal(0, 0.2, n_points)
+
+    points = np.column_stack([x, y, z])
+
+    # Create semantic labels
+    labels = np.zeros(n_points, dtype=int)
+    ground_mask = z < -1.5
+    labels[ground_mask] = 14  # terrain
+    vehicle_mask = (-1 < z) & (z < 3) & (10 < r) & (r < 30)
+    labels[vehicle_mask] = 4  # car
+    building_mask = (z > 2) & (r > 30)
+    labels[building_mask] = 15  # manmade
+    vegetation_mask = (z > 0.5) & (r > 20) & ~building_mask & ~vehicle_mask
+    labels[vegetation_mask] = 16  # vegetation
+
+    # Create visualizer
+    visualizer = VisualizerFactory.create_lidar_visualizer(
+        point_size=2,
+        show_ego_car=True,
+        background_color=(10, 10, 10)
+    )
+
+    try:
+        print("Starting interactive point cloud visualization...")
+        print("Available camera controls:")
+        print("  C: Save current camera view to timestamped file")
+        print("  L: Load most recent saved camera view")
+        print("  V: Toggle camera parameter persistence")
+        print("  S: Save screenshot")
+        print("  R: Reset view to default")
+        print("  ESC: Exit visualization")
+        print("\nTip: Adjust the view as desired and press 'C' to save camera parameters")
+        print("     Then press 'L' to reload them or use them in sequence processing")
+
+        success = visualizer.visualize_point_cloud(
+            points=points,
+            labels=labels,
+            save_path="interactive_camera_demo.png"
+        )
+
+        if success:
+            print("Interactive visualization completed successfully")
+            print("Check for saved camera parameter files (camera_params_*.json)")
+        else:
+            print("Interactive visualization was interrupted")
+
+    except Exception as e:
+        print(f"Interactive demo failed: {e}")
+    finally:
+        visualizer.cleanup()
+
+
 if __name__ == "__main__":
     # Print class information
     demo_class_legend()
@@ -4641,3 +5659,21 @@ if __name__ == "__main__":
 
     print("Running custom colors point cloud demo...")
     demo_custom_colors_point_cloud()
+
+    print("Running camera parameter flexibility demo...")
+    demo_camera_parameter_flexibility()
+
+    print("Running interactive camera controls demo...")
+    demo_interactive_camera_controls()
+
+    print("Running distance-based coloring demo...")
+    demo_distance_based_coloring()
+
+    print("Running LiDAR distance coloring demo...")
+    demo_lidar_distance_coloring()
+
+    print("Running distance coloring comparison demo...")
+    demo_distance_coloring_comparison()
+
+    print("Running distance coloring customization demo...")
+    demo_distance_coloring_customization()

@@ -10,10 +10,12 @@ import numpy as np
 from occupancy_visualizer import VisualizerFactory, VisualizationMode
 
 def quick_demo():
-    occupancy_data_occ3d = np.load('demo_data/3D_occupancy_data.npz')['semantics']        # (H, W, D), values in [0, num_classes-1]
+    occupancy_data_occ3d = np.load('demo_data/3D_occupancy_data.npz')['semantics']          # (H, W, D), values in [0, num_classes-1]
     occupancy_data_openocc = np.load('demo_data/3D_occupancy_flow_data.npz')['semantics']
-    occupancy_flow_data_openocc = np.load('demo_data/3D_occupancy_flow_data.npz')['flow']  # (H, W, D, 2), float32
-    occupancy_4d_data = np.load('demo_data/4D_occupancy_data.npz')['semantics']  # (T, H, W, D), values in [0, num_classes-1]
+    occupancy_flow_data_openocc = np.load('demo_data/3D_occupancy_flow_data.npz')['flow']   # (H, W, D, 2), float32
+    occupancy_4d_data = np.load('demo_data/4D_occupancy_data.npz')['semantics']             # (T, H, W, D), values in [0, num_classes-1]
+    lidar_3d_data = np.load('demo_data/3D_lidar.npy')                                       # (N, 3), float32
+    lidar_4d_data = np.load('demo_data/3D_lidar_sequence.npy')                              # (T, N, 3), float32
 
     print("🚀 Quick Occupancy Visualization Demo")
     print("1. Visualizing 3D Occupancy Data with Occ3D Color Map")
@@ -106,6 +108,37 @@ def quick_demo():
         create_video=True
     )
     visualizer.cleanup()
+
+    print("8. Visualizing point cloud...")
+    visualizer_point = VisualizerFactory.create_point_cloud_visualizer()
+    visualizer_point.visualize_point_cloud(
+        points=lidar_3d_data,
+        save_path="quick_demo_lidar.png"
+    )
+    visualizer_point.cleanup()
+    # distance color
+    visualizer_point_distance = VisualizerFactory.create_distance_colored_visualizer(
+        color_scheme="viridis",
+        distance_range=(0, 60)
+    )
+    visualizer_point_distance.visualize_point_cloud(
+        points=lidar_3d_data,
+        save_path="quick_demo_lidar_distance.png"
+    )
+    visualizer_point_distance.cleanup()
+
+    print("9. Visualizing 4D point cloud sequence...")
+    visualizer, processor = VisualizerFactory.create_point_cloud_batch_processor(
+        output_dir="output",
+        use_distance_coloring=True,
+        distance_color_scheme="viridis",
+        distance_range=(0, 60)
+    )
+    results = processor.process_point_cloud_sequence(
+        points_sequence=lidar_4d_data,
+        create_video=True,
+        video_fps=5,
+    )
 
 
 if __name__ == '__main__':
